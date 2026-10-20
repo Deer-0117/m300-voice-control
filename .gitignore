@@ -1,0 +1,8 @@
+.env
+.venv/
+state/
+inputs/
+.build/
+third_party/whisper.cpp/
+__pycache__/
+*.pyc

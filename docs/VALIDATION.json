@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-20",
+  "original_source_files_verified_unchanged": 138,
+  "reference_files_verified_unchanged": 4,
+  "python_tests": 34,
+  "command_guard_tests": "passed",
+  "psdk_widget_callback_tests_with_test_stubs": "passed",
+  "psdk_callback_memory_sanitizers": "AddressSanitizer/UndefinedBehaviorSanitizer passed",
+  "C_type_check": "passed with official public headers on local host, NOT device SDK 3.9.2 ARM64 linking",
+  "real_local_asr": {
+    "real_asr_transcript": "先撞红色气球,再撞绿色气球。",
+    "asr_seconds": 0.619,
+    "used_local_test_binary_only": true,
+    "llm_calls": 0,
+    "aircraft_calls": 0,
+    "opus_cbr_decode_verified": {
+      "packets": 86,
+      "packet_bytes": 40,
+      "decoded_pcm_bytes": 110080
+    }
+  },
+  "secret_scan": "no original real API key in source or backup",
+  "new_env_key": "Your API Key",
+  "simulation_imports_in_app": 0,
+  "device_ssh": "192.168.55.1 connection timed out; no device changes",
+  "device_build_validated": false,
+  "remote_controller_hardware_validated": false,
+  "actual_flight_validated": false,
+  "real_aircraft_commands_sent": 0
+}

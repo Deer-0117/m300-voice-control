@@ -1,0 +1,7 @@
+{
+  "git_url": "https://github.com/ggml-org/whisper.cpp.git",
+  "commit": "0c7be696371069e0baa2515ed7aa08d5a5473aa6",
+  "model_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+  "model_sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+  "basis": "source commit and model bytes used by the existing successful local ASR tests"
+}

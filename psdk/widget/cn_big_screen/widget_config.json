@@ -1,0 +1,165 @@
+{
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "main_interface": {
+    "floating_window": {
+      "is_enable": true
+    },
+    "speaker": {
+      "is_enable_tts": false,
+      "is_enable_voice": true
+    },
+    "widget_list": [
+      {
+        "widget_index": 0,
+        "widget_type": "button",
+        "widget_name": "查看计划/准备",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 1,
+        "widget_type": "button",
+        "widget_name": "确认执行",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 2,
+        "widget_type": "button",
+        "widget_name": "拒绝计划",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 3,
+        "widget_type": "button",
+        "widget_name": "暂停任务",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 4,
+        "widget_type": "button",
+        "widget_name": "确认目标完成",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 5,
+        "widget_type": "button",
+        "widget_name": "释放控制/接管",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      }
+    ]
+  },
+  "config_interface": {
+    "widget_list": [
+      {
+        "widget_index": 6,
+        "widget_type": "button",
+        "widget_name": "查看计划/准备",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 7,
+        "widget_type": "button",
+        "widget_name": "确认执行",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 8,
+        "widget_type": "button",
+        "widget_name": "拒绝计划",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 9,
+        "widget_type": "button",
+        "widget_name": "暂停任务",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 10,
+        "widget_type": "button",
+        "widget_name": "确认目标完成",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 11,
+        "widget_type": "button",
+        "widget_name": "释放控制/接管",
+        "icon_file_set": {
+          "icon_file_name_selected": "button.png",
+          "icon_file_name_unselected": "button.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      }
+    ]
+  }
+}
