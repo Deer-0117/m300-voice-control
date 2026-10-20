@@ -48,7 +48,7 @@ scripts/                 安装、启动、输入路径绑定和测试
 config/                  现场验收说明
 third_party/             whisper.cpp 和模型的放置说明
 backups/                 原项目源码备份与 SHA-256 清单
-.env.example / .env      仅有占位密钥的配置
+.env                     仅有占位密钥的配置
 ```
 
 ## API Key 填在哪里
@@ -61,11 +61,11 @@ OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_CHAT_MODEL_ID=deepseek-flash
 ```
 
-源码包的 `.env` 和 `.env.example` 均只包含 `Your API Key`，没有复制旧项目的真实 Key。填写后请保留 `.env` 的仅当前用户可读写权限（`chmod 600 .env`）。
+仓库中的 `.env` 只包含 `Your API Key` 占位符，没有复制旧项目的真实 Key。填写后请保留 `.env` 的仅当前用户可读写权限（`chmod 600 .env`）。
 
 若使用学校或其他兼容服务，须同时填写对应的 `OPENAI_BASE_URL` 和有权限的模型名称。模型必须支持 `image_url` 图片输入。服务端的 `deepseek-flash` 名称可能是路由别名，不能据名字推断模型能力，应在目标网络上重新验证。API Key、服务地址、模型名不能跨服务商随意混用。
 
-不要把 `.env` 当 Shell 脚本 `source`。由 Python 配置加载器读取，允许占位值中有空格。填写真实密钥后不要分享或提交该文件。启动时环境中的 `OPENAI_*`、`UAV_*` 同名项会覆盖 `.env`，排查配置时请留意。
+不要把 `.env` 当 Shell 脚本 `source`。由 Python 配置加载器读取，允许占位值中有空格。填写真实密钥后不要分享或提交该文件；`.env` 已被 Git 跟踪，`.gitignore` 不会阻止它的后续修改进入提交。启动时环境中的 `OPENAI_*`、`UAV_*` 同名项会覆盖 `.env`，排查配置时请留意。
 
 ## 机载安装
 
