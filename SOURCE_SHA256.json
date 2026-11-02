@@ -2,7 +2,7 @@
   ".env.example": "28d46730126bba75f84841b6b8837a3a011bc27e0864c8b174afe4417556dd25",
   ".gitattributes": "58424f034fa042cc08e52078bbd3e1922a930a13c9335da34c5fe63eb90d3aeb",
   ".gitignore": "f9c88b001f8ed0edbba81f3f88b9dd17f27eb4eb94c4341b82fd1f3fb950f4c5",
-  "README.md": "4c1092947d210683c40f5bf55f5c692a9ff376ea2b7b4243d0501cf0fe90e9c7",
+  "README.md": "e26e38781b859f276e29b554f22cabee4c5ddeaeeb01d769e4f38704ee045012",
   "app/__init__.py": "1b6ac046e4d5b26b8a103a28a83f3ce1ebf197e081cb486c43dc75fea1e268f5",
   "app/__main__.py": "282b3e27bfc7a2de34cab530038ca2daa6e8d3e0520406fa3f687b5c244f4775",
   "app/asr.py": "96ebac766b1f4034621dfcc41d050ea1af1c0c9e0cb37ef8d8bb37d85d0e00e9",
