@@ -9,7 +9,8 @@ def path(value):
 
 def load_env():
     values = {}
-    file = ROOT / '.env'
+    # Keep the real key outside the copied source tree; legacy .env still works.
+    file = Path(os.environ.get('M300_ENV_FILE', str(ROOT / '.env'))).expanduser()
     if file.exists():
         for line in file.read_text().splitlines():
             if not line.strip() or line.lstrip().startswith('#'): continue

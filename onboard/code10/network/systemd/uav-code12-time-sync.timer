@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically synchronize Code10 clock from Code12
+
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=10min
+Unit=uav-code12-time-sync.service
+
+[Install]
+WantedBy=timers.target

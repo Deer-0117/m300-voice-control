@@ -1,6 +1,15 @@
 from __future__ import annotations
 import ctypes, ctypes.util, hashlib, subprocess, wave, uuid
 from pathlib import Path
+from functools import lru_cache
+import sys
+
+@lru_cache(maxsize=1)
+def simplified_converter():
+    dependencies=Path(__file__).resolve().parents[1]/'migration/text-deps'
+    sys.path.insert(0,str(dependencies))
+    from opencc import OpenCC
+    return OpenCC('t2s')
 
 class Recognizer:
     def __init__(self,cfg):self.cfg=cfg
@@ -42,4 +51,4 @@ class Recognizer:
         if result.returncode:raise RuntimeError('whisper.cpp failed')
         text=name.with_suffix('.txt').read_text().strip()
         if not text:raise ValueError('empty ASR transcript')
-        return text
+        return simplified_converter().convert(text)

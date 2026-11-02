@@ -1,0 +1,3 @@
+# Versions recorded for the deployed code10 Agent environment.
+agent-framework-core==1.12.0
+agent-framework-openai==1.10.2

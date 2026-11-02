@@ -1,0 +1,36 @@
+#!/bin/sh
+# This dedicated SSH key can only return code12's UTC epoch.
+set -eu
+attempts=${UAV_CODE12_TIME_SYNC_ATTEMPTS:-45}
+retry_delay=${UAV_CODE12_TIME_SYNC_RETRY_DELAY_SEC:-5}
+attempt=1
+while [ "$attempt" -le "$attempts" ]; do
+  epoch=$(/usr/bin/ssh -o BatchMode=yes -o IdentitiesOnly=yes \
+    -o ConnectionAttempts=1 -o ConnectTimeout=3 \
+    -o ServerAliveInterval=2 -o ServerAliveCountMax=1 \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=/home/uav/.ssh/known_hosts_code12_time \
+    -i /home/uav/.ssh/code10_code12_time_ed25519 \
+    uav@192.168.168.222 2>/dev/null || true)
+  valid=0
+  case "$epoch" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "${#epoch}" -eq 10 ] && [ "$epoch" -ge 1700000000 ] && [ "$epoch" -le 4102444800 ]; then
+        valid=1
+      fi
+      ;;
+  esac
+  if [ "$valid" -eq 1 ]; then
+    /usr/bin/date -u -s "@$epoch" >/dev/null
+    echo "Code10 clock synchronized from Code12 on attempt $attempt"
+    exit 0
+  fi
+  if [ "$attempt" -lt "$attempts" ]; then
+    echo "Code12 time source unavailable; retrying ($attempt/$attempts)" >&2
+    /usr/bin/sleep "$retry_delay"
+  fi
+  attempt=$((attempt + 1))
+done
+echo "Code12 time source unavailable after $attempts attempts" >&2
+exit 1

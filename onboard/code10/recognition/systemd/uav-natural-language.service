@@ -1,0 +1,26 @@
+# Capability gateway between confirmed plans and the flight mission files.
+# Validation is local; unlisted actions and raw control parameters are rejected.
+[Unit]
+Description=Validated Capability Gateway for UAV Balloon Mission
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/uav/offline_balloon_strike_test
+Environment=PYTHONUNBUFFERED=1
+# Authentication material is device-local and intentionally absent from Git.
+EnvironmentFile=-/etc/uav-natural-language.env
+ExecStart=/home/uav/offline_balloon_strike_test/yolo_env/bin/python /home/uav/offline_balloon_strike_test/uav_natural_language.py --serve
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

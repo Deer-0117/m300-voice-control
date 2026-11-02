@@ -1,3 +1,6 @@
 Pillow>=10,<12
 # Optional decoder only: use Jetson system OpenCV built with GStreamer.
 # Do not pip-install opencv-python over the working Jetson cv2 installation.
+
+# Traditional-to-simplified ASR output, matching the deployed converter.
+opencc-python-reimplemented==0.1.7

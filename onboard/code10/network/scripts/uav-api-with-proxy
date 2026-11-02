@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+if [ "$#" -eq 0 ]; then
+    echo "Usage: uav-api-with-proxy command [arguments...]" >&2
+    exit 2
+fi
+set -a
+. /etc/uav-code12-proxy.env
+set +a
+exec "$@"

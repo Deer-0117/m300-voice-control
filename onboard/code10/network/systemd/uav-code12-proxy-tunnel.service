@@ -1,0 +1,15 @@
+[Unit]
+Description=Code10 local API proxy tunnel through Code12
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uav
+Group=uav
+ExecStart=/usr/bin/ssh -NT -o BatchMode=yes -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/uav/.ssh/known_hosts_code12_proxy -i /home/uav/.ssh/code10_code12_proxy_ed25519 -L 127.0.0.1:18080:127.0.0.1:18080 uav@192.168.168.222
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

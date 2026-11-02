@@ -38,7 +38,11 @@ class Runtime:
             row=self.segment
             self.recent_actions.append({'command':row['velocity'],'executed_duration_s':max(0,(min(now_ms(),row['deadline'])-row['start'])/1000),'actual_mean_velocity_body_mps':[x/max(1,row['samples']) for x in row['actual_sum']],'call_id':row['call_id']})
         self.segment=None;self.stable_since=None;self.motion_id+=1
-        if self.motion_future:self.motion_future.cancel();self.motion_future=None
+        # This is a request record, not the Future itself. Detach first so a
+        # running HTTP request can never be consumed after an interruption.
+        request=self.motion_future
+        self.motion_future=None
+        if request:request['future'].cancel()
 
     def publish(self,t):
         m=self.mission;now=now_ms();frames=self.camera.sample();v=dict(ZERO)
@@ -72,9 +76,9 @@ class Runtime:
                 self.task_future=None
             elif kind=='voice_finish' and self.voice_revision and event['audio_id']==self.voice_revision[0]:
                 rev=self.voice_revision[1];snapshot=copy.deepcopy(self.mission)
-                def work(ev=event,ms=snapshot):
+                def work(ev=event,ms=snapshot,revision=rev):
                     text=self.asr.recognize_event(ev)
-                    self.wait_for_stability(rev)
+                    self.wait_for_stability(revision)
                     result=self.client.task(text,ms)
                     return text,result
                 self.task_future=(self.pool.submit(work),rev)

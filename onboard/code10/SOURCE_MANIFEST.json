@@ -1,0 +1,199 @@
+{
+  "checked_date": "2026-11-02",
+  "device": "code10",
+  "method": "Selected source SHA-256 checked over SSH; matching local snapshots copied. No credential or runtime configuration files collected.",
+  "files": [
+    {
+      "path": "app/asr.py",
+      "device": "/home/uav/m300-migration-v1/app/asr.py",
+      "sha256": "96ebac766b1f4034621dfcc41d050ea1af1c0c9e0cb37ef8d8bb37d85d0e00e9"
+    },
+    {
+      "path": "app/config.py",
+      "device": "/home/uav/m300-migration-v1/app/config.py",
+      "sha256": "a6b0b93e2b3ac9346e09da695533ca3ab0fd4b38d0e11815bf6e50ded38d4a4a"
+    },
+    {
+      "path": "app/model.py",
+      "device": "/home/uav/m300-migration-v1/app/model.py",
+      "sha256": "5a3f7f06fb937562c9a4e4c5dc4939fcc82e92d9502d6a7eda24e4b54f58d4b1"
+    },
+    {
+      "path": "app/runtime.py",
+      "device": "/home/uav/m300-migration-v1/app/runtime.py",
+      "sha256": "a3c50ab1e7f18ea835531a0fff0a9d5245348d3ca010a50d97760f0bbcd0e889"
+    },
+    {
+      "path": "tests/test_psdk_bridge.c",
+      "device": "/home/uav/m300-migration-v1/tests/test_psdk_bridge.c",
+      "sha256": "26c6e1444c909ca811ef987c46d409a370d36f992be1441a7fba8e09613e0835"
+    },
+    {
+      "path": "tests/test_migration.py",
+      "device": "/home/uav/m300-migration-v1/tests/test_migration.py",
+      "sha256": "8c46e327bdf8c8ccf05dd509120a90ff55652fe0bf79845ecfddd8bd3a1ebb9c"
+    },
+    {
+      "path": "tests/test_host_staging.py",
+      "device": "/home/uav/m300-migration-v1/tests/test_host_staging.py",
+      "sha256": "985bb4a756e3681f429e173d1e127e5525f8f0e663d701d299fdeedd35064001"
+    },
+    {
+      "path": "migration/inspect-host.py",
+      "device": "/home/uav/m300-migration-v1/migration/inspect-host.py",
+      "sha256": "c3cdbd2f2d7ad785726660221bdd61bb2eb258138b9a08754b845df93fbe15e2"
+    },
+    {
+      "path": "migration/configure.py",
+      "device": "/home/uav/m300-migration-v1/migration/configure.py",
+      "sha256": "7c0a74cfa5a3fc07565af036b87dddd62be715947ab86bb4c9d52506d7dc1c1e"
+    },
+    {
+      "path": "migration/check-host-build.py",
+      "device": "/home/uav/m300-migration-v1/migration/check-host-build.py",
+      "sha256": "73bdf70d63ce78d5e92a963f27010fb0386f069d84ebb670f1c0a0305b9e890f"
+    },
+    {
+      "path": "migration/probe-api.py",
+      "device": "/home/uav/m300-migration-v1/migration/probe-api.py",
+      "sha256": "2bb4d8c9c90db68584bf938078252f5fc9b7086c04f14f398cc97eafaa397bd6"
+    },
+    {
+      "path": "migration/test-on-jetson.sh",
+      "device": "/home/uav/m300-migration-v1/migration/test-on-jetson.sh",
+      "sha256": "4954fd097905fbe0e5d1f89a1703529fbca92589d422215b4e31d8151763c33c"
+    },
+    {
+      "path": "migration/run-on-jetson.sh",
+      "device": "/home/uav/m300-migration-v1/migration/run-on-jetson.sh",
+      "sha256": "7e6d8359e833d553ec49272c33ad1fcc2a589332e9469a5d92d46c612812a39d"
+    },
+    {
+      "path": "migration/prepare-host.py",
+      "device": "/home/uav/m300-migration-v1/migration/prepare-host.py",
+      "sha256": "a2d3fec3bc0b41944b31cf6e5267e21d3855fddfeca1907836d85c1cd5e5b558"
+    },
+    {
+      "path": "migration/host/CMakeLists.txt",
+      "device": "/home/uav/m300-migration-v1/migration/host/CMakeLists.txt",
+      "sha256": "646b151595cabd4e48d083a16cd224868ac072e1734d4fd3e4db335443d40c00"
+    },
+    {
+      "path": "migration/host/migration_main.cpp",
+      "device": "/home/uav/m300-migration-v1/migration/host/migration_main.cpp",
+      "sha256": "73db059cb9ca5c8508c80b293c5e5a0cd4631b32777167abf9d8b4ecfa422977"
+    },
+    {
+      "path": "onboard/code10/recognition/runtime/uav_voice_command.py",
+      "device": "/home/uav/offline_balloon_strike_test/uav_voice_command.py",
+      "sha256": "6fe2772ca764adeca75d926b94c7fc67c7cb7f3205e9bad95f5a132e15b0175c"
+    },
+    {
+      "path": "onboard/code10/recognition/runtime/uav_natural_language.py",
+      "device": "/home/uav/offline_balloon_strike_test/uav_natural_language.py",
+      "sha256": "65f15f48e0674f7026be3dab819754b9166332521201e5f2bcac3c727f6cfaac"
+    },
+    {
+      "path": "onboard/code10/recognition/runtime/uav_capabilities.py",
+      "device": "/home/uav/offline_balloon_strike_test/uav_capabilities.py",
+      "sha256": "7dcaa54595532b241b60ee13212f30990abd972cf7de0caa26c6faaf8d2f267c"
+    },
+    {
+      "path": "onboard/code10/recognition/runtime/balloon_mission.py",
+      "device": "/home/uav/offline_balloon_strike_test/balloon_mission.py",
+      "sha256": "52dcb3ea9b82ba6fb32fe8c38b95b212b8e2f07519c9006251acce2fd20c7635"
+    },
+    {
+      "path": "onboard/code10/recognition/runtime/balloon_clock.py",
+      "device": "/home/uav/offline_balloon_strike_test/balloon_clock.py",
+      "sha256": "9b8cd1f0b93d6425864f188f98468803c7867640767265d7c4bccef135f46eb2"
+    },
+    {
+      "path": "onboard/code10/recognition/agent/uav_microsoft_agent.py",
+      "device": "/opt/uav-microsoft-agent/app/uav_microsoft_agent.py",
+      "sha256": "253f7cff61031ee08db2b21a0c1ab5d967717d55a17611245811b6c610d75d5e"
+    },
+    {
+      "path": "onboard/code10/recognition/agent/uav_capabilities.py",
+      "device": "/opt/uav-microsoft-agent/app/uav_capabilities.py",
+      "sha256": "8d4d6261950913a8f8ac0f2f96c5c462d88507b1335bb8407d59d88095a0943b"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
+      "sha256": "4c51a13890b33a2f0509a6c7fa15635dfc693a5915add6e761072e178e5b3d2f"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.h",
+      "sha256": "36806cec44ad6e51836f1c9efdc45d02ef71d22f0ffd77a31f8b0d2b756ee3ec"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
+      "sha256": "f6551fb3741304c5dbd59616ed7c962eff0fa75c4044e94c10c8de3118873203"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_clock.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_clock.h",
+      "sha256": "341223a1c982f1a1eb7e1bc4fc78fa89790ea72294e4458fb6fea219871861f1"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
+      "sha256": "66c1785b79647d2c49b66841dbb9c4eb2cb0c54aeeeffcb20d1930fe02eadef1"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_mission_gate.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_mission_gate.h",
+      "sha256": "157c84bd11b5c3bae8d5036eb9f2747de5b28237bee119bc880f0dffbadadc26"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_evidence.h",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_evidence.h",
+      "sha256": "65983a2208777ef986dbc792d8681efd81f0fdc3abaea6d93bb7ee53bd47e7f3"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
+      "sha256": "f61b568ad3dee770197be2c33d0719d9675028dd51279b221fb99d5da5417d17"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/widget_config.json",
+      "device": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/widget_config.json",
+      "sha256": "23350d63491dfbde1519dc5725f12dad87bef032ad1ebfc4011b63832965bd87"
+    },
+    {
+      "path": "onboard/code10/balloon-controls/scripts/uav-api-functional-test",
+      "device": "/usr/local/bin/uav-api-functional-test",
+      "sha256": "601d4b371c6fd18658d0a68b8b3c8c673997b8f0014bad22dc869ab41cd7782e"
+    },
+    {
+      "path": "onboard/code10/network/check_network.py",
+      "device": "/usr/local/bin/uav-api-network-check",
+      "sha256": "1ff95553b98cf949d09666a75b8ba59cac12672d0ec74059bad60ea3a36bc2db"
+    },
+    {
+      "path": "onboard/code10/network/check_agent_proxy.py",
+      "device": "/usr/local/bin/uav-api-agent-proxy-check",
+      "sha256": "75e0f4fda06fa7df84726f94e35be020e742b4a5ed6dcfaa9bddb61b43ad2074"
+    },
+    {
+      "path": "onboard/code10/network/scripts/uav-api-with-proxy",
+      "device": "/usr/local/bin/uav-api-with-proxy",
+      "sha256": "b89be007ca308366e8e98a4c4d4ef26a0c98f2cf9319acc47880aff2dee09106"
+    },
+    {
+      "path": "onboard/code10/network/scripts/uav-api-network-connect",
+      "device": "/usr/local/bin/uav-api-network-connect",
+      "sha256": "32040aa1864b271c4cdd2a93aa72f798df9a8cf31976818c08cbb58d900b1b30"
+    }
+  ],
+  "packaging_changes": [
+    "requirements.txt adds OpenCC dependency",
+    "network installer now manages existing API-network-connect helper",
+    "test paths/runners and docs adapted to repository layout",
+    ".env renamed to placeholder .env.example; private files ignored"
+  ],
+  "scope": "Selected new/updated project code only, not a full device image or binary reproducibility proof."
+}

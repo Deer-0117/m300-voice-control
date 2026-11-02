@@ -9,7 +9,7 @@ class ModelClient:
 
     def call(self, kind, messages):
         c = self.cfg
-        if not c.key or c.key == 'Your API Key': raise ValueError('请在 .env 的 OPENAI_API_KEY 填写自己的 API Key')
+        if not c.key or c.key == 'Your API Key': raise ValueError('请在本地私有配置中填写 OPENAI_API_KEY')
         ident = uuid.uuid4().hex
         directory = c.state/'api-transcript'/ident
         directory.mkdir(parents=True)
@@ -28,8 +28,9 @@ class ModelClient:
             return {'call_id':ident,'answer':answer,'sent_ms':start,'received_ms':now_ms()}
         except Exception as exc:
             # Never log HTTP headers, credentials or potentially sensitive supplier errors.
-            atomic_json(directory/'error.json', {'type':type(exc).__name__,'elapsed_ms':now_ms()-start})
-            raise RuntimeError('模型调用失败：'+type(exc).__name__) from None
+            status=exc.code if isinstance(exc,urllib.error.HTTPError) else None
+            atomic_json(directory/'error.json', {'type':type(exc).__name__,'http_status':status,'elapsed_ms':now_ms()-start})
+            raise RuntimeError('模型调用失败：'+type(exc).__name__+(f' HTTP {status}' if status else '')) from None
 
     def task(self, text, mission):
         data = {'command':text,'prior_targets':mission.targets[:],'completed':mission.completed[:], 'recent_turns':mission.history[-6:]}

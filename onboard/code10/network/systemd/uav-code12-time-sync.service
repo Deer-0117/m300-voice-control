@@ -1,0 +1,9 @@
+[Unit]
+Description=Synchronize Code10 clock from restricted Code12 SSH key
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/uav-code12-time-sync
+TimeoutStartSec=7min

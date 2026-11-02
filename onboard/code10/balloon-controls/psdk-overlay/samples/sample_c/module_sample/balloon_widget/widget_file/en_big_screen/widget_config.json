@@ -1,0 +1,165 @@
+{
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "main_interface": {
+    "floating_window": {
+      "is_enable": true
+    },
+    "speaker": {
+      "is_enable_tts": true,
+      "is_enable_voice": true
+    },
+    "widget_list": [
+      {
+        "widget_index": 18,
+        "widget_type": "button",
+        "widget_name": "Start any balloon strike",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 19,
+        "widget_type": "button",
+        "widget_name": "Start pink then yellow",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 20,
+        "widget_type": "button",
+        "widget_name": "Execute voice mission",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 21,
+        "widget_type": "button",
+        "widget_name": "Stop all tests",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 22,
+        "widget_type": "switch",
+        "widget_name": "Record during test",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_switch_select.png",
+          "icon_file_name_unselected": "icon_switch_unselect.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 23,
+        "widget_type": "button",
+        "widget_name": "Skip target and continue",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      }
+    ]
+  },
+  "config_interface": {
+    "widget_list": [
+      {
+        "widget_index": 24,
+        "widget_type": "button",
+        "widget_name": "Check network connection",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 26,
+        "widget_type": "button",
+        "widget_name": "API Network",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 27,
+        "widget_type": "button",
+        "widget_name": "Speech recognition test",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 28,
+        "widget_type": "button",
+        "widget_name": "Image recognition test",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 29,
+        "widget_type": "button",
+        "widget_name": "Task intent test",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 25,
+        "widget_type": "button",
+        "widget_name": "Clear pending voice command",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      }
+    ]
+  }
+}

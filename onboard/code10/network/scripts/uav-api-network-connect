@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""Bring up the existing Code12 API path and report transport readiness only."""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+import fcntl
+import json
+import os
+from pathlib import Path
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+
+STATE_DIRECTORY = Path("/run/uav-api-network")
+SYSTEMCTL = "/usr/bin/systemctl"
+CHECKER = "/usr/local/bin/uav-api-network-check"
+TUNNEL = "uav-code12-proxy-tunnel.service"
+TIME_SERVICE = "uav-code12-time-sync.service"
+TIMER = "uav-code12-time-sync.timer"
+TOTAL_BUDGET_SECONDS = 25.0
+MAX_COMMAND_SECONDS = 6.0
+EXIT_OK = 0
+EXIT_INTERNAL = 1
+EXIT_BUSY = 2
+EXIT_CODE12 = 10
+EXIT_PROXY = 11
+EXIT_CLOCK = 12
+EXIT_TLS = 13
+EXIT_HTTPS = 14
+
+
+class AlreadyRunning(RuntimeError):
+    pass
+
+
+class BudgetExpired(RuntimeError):
+    pass
+
+
+class ServiceFailure(RuntimeError):
+    pass
+
+
+def boot_clock_id() -> str:
+    try:
+        token = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        if len(token) == 36 and all(c in "0123456789abcdef-" for c in token):
+            return "monotonic:" + token
+    except OSError:
+        pass
+    return "monotonic:unknown"
+
+
+class StateStore:
+    """Only the root-owned private runtime directory can contain state files."""
+
+    def __init__(self, directory: Path = STATE_DIRECTORY):
+        self.directory = Path(directory)
+
+    def validate_directory(self, create: bool = False) -> None:
+        parent = self.directory.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode):
+            raise OSError("unsafe runtime parent")
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            raise OSError("runtime parent must be privately controlled")
+        if create:
+            try:
+                self.directory.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+        current = self.directory.lstat()
+        if not stat.S_ISDIR(current.st_mode) or stat.S_ISLNK(current.st_mode):
+            raise OSError("unsafe runtime directory")
+        if current.st_uid != os.geteuid() or current.st_mode & 0o077:
+            raise OSError("runtime directory must be owned privately")
+
+    @contextmanager
+    def acquire(self):
+        self.validate_directory(create=True)
+        path = self.directory / "connect.lock"
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            item = os.fstat(fd)
+            if not stat.S_ISREG(item.st_mode) or item.st_uid != os.geteuid() or item.st_nlink != 1:
+                raise OSError("unsafe runtime lock")
+            os.fchmod(fd, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise AlreadyRunning from exc
+            yield self
+        finally:
+            os.close(fd)
+
+    def atomic_write(self, name: str, payload: bytes) -> None:
+        target = self.directory / name
+        try:
+            item = target.lstat()
+            if not stat.S_ISREG(item.st_mode) or item.st_uid != os.geteuid() or item.st_nlink != 1:
+                raise OSError("unsafe runtime result")
+        except FileNotFoundError:
+            pass
+        fd, temporary = tempfile.mkstemp(prefix=".result-", dir=self.directory)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, target)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def publish(self, result: dict) -> None:
+        self.validate_directory()
+        self.atomic_write("button-message.txt", (result["message"] + "\n").encode("utf-8"))
+        self.atomic_write("button-status.json", (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+
+    def read(self) -> dict:
+        self.validate_directory()
+        path = self.directory / "button-status.json"
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as source:
+            item = os.fstat(source.fileno())
+            if not stat.S_ISREG(item.st_mode) or item.st_uid != os.geteuid() or item.st_size > 65536:
+                raise OSError("unsafe runtime status")
+            result = json.loads(source.read())
+        if not isinstance(result, dict):
+            raise ValueError("invalid status")
+        return result
+
+
+class Connector:
+    def __init__(self, store: StateStore, runner=subprocess.run,
+                 connect=socket.create_connection, monotonic=time.monotonic,
+                 wall_time=time.time, sleep=time.sleep, clock_id=boot_clock_id):
+        self.store, self.runner, self.connect = store, runner, connect
+        self.monotonic, self.wall_time, self.sleep = monotonic, wall_time, sleep
+        self.clock_id = clock_id
+        self.started = 0.0
+        self.deadline = 0.0
+        self.operation_id = ""
+        self.last_result: dict = {}
+
+    def remaining(self) -> float:
+        return self.deadline - self.monotonic()
+
+    def publish(self, state: str, message: str, exit_code: int | None,
+                http_status: int | None = None, stages: list | None = None) -> dict:
+        now = self.monotonic()
+        result = {
+            "version": 1,
+            "operation_id": self.operation_id,
+            "state": state,
+            "message": message,
+            "exit_code": exit_code,
+            "network_reachable": exit_code == EXIT_OK,
+            "api_authenticated": False,
+            "model_call_tested": False,
+            "http_status": http_status,
+            "clock_id": self.clock_id(),
+            "started_monotonic_ms": round(self.started * 1000),
+            "monotonic_ms": round(now * 1000),
+            "duration_ms": max(0, round((now - self.started) * 1000)),
+            "stages": stages or [],
+        }
+        self.store.publish(result)
+        self.last_result = result
+        return result
+
+    def finish(self, code: int, state: str, message: str, **extra) -> int:
+        self.publish(state, message, code, **extra)
+        return code
+
+    def command(self, arguments: list[str]):
+        remaining = self.remaining()
+        if remaining <= 0:
+            raise BudgetExpired
+        return self.runner(arguments, capture_output=True, text=True,
+                           timeout=min(MAX_COMMAND_SECONDS, remaining), check=False)
+
+    def service(self, arguments: list[str]) -> None:
+        result = self.command([SYSTEMCTL, *arguments])
+        if result.returncode:
+            raise ServiceFailure
+
+    def probe(self, host: str, port: int, timeout: float) -> bool:
+        remaining = self.remaining()
+        if remaining <= 0:
+            raise BudgetExpired
+        try:
+            with self.connect((host, port), timeout=min(timeout, remaining)):
+                pass
+            return True
+        except OSError:
+            return False
+
+    def wait_for_proxy(self) -> bool:
+        # Preserve six seconds for the final bounded checker subprocess.
+        wait_until = min(self.monotonic() + 6.0, self.deadline - MAX_COMMAND_SECONDS)
+        while self.monotonic() < wait_until:
+            if self.probe("127.0.0.1", 18080, min(0.5, wait_until - self.monotonic())):
+                return True
+            delay = min(0.25, max(0.0, wait_until - self.monotonic()))
+            if delay:
+                self.sleep(delay)
+        return False
+
+    def wait_for_clock(self) -> bool:
+        wait_until = min(self.monotonic() + 5.0, self.deadline - MAX_COMMAND_SECONDS)
+        while True:
+            if 1704067200 <= self.wall_time() <= 4102444800:
+                return True
+            if self.monotonic() >= wait_until:
+                return False
+            self.sleep(min(0.25, wait_until - self.monotonic()))
+
+    def check_transport(self) -> int:
+        try:
+            checked = self.command([CHECKER, "--url", "https://api.deepseek.com", "--timeout", "3", "--json"])
+        except (subprocess.TimeoutExpired, BudgetExpired):
+            return self.finish(EXIT_HTTPS, "https_timeout", "API联网超时：HTTPS未就绪，请重试")
+        if len(checked.stdout) > 65536:
+            return self.finish(EXIT_INTERNAL, "invalid_checker_result", "API联网失败：检查结果异常")
+        try:
+            report = json.loads(checked.stdout)
+            if not isinstance(report, dict) or not isinstance(report.get("stages"), list):
+                raise ValueError
+            stages = []
+            known = {"code12_tcp", "proxy_tcp", "http_connect", "tls", "api_http"}
+            for item in report["stages"]:
+                if not isinstance(item, dict) or item.get("stage") not in known or not isinstance(item.get("ok"), bool):
+                    raise ValueError
+                safe = {"stage": item["stage"], "ok": item["ok"]}
+                value = item.get("http_status")
+                if value is not None:
+                    if isinstance(value, bool) or not isinstance(value, int) or not 100 <= value <= 599:
+                        raise ValueError
+                    safe["http_status"] = value
+                stages.append(safe)
+            if len(stages) > 5 or len({s["stage"] for s in stages}) != len(stages):
+                raise ValueError
+        except (ValueError, TypeError, KeyError):
+            return self.finish(EXIT_INTERNAL, "invalid_checker_result", "API联网失败：检查结果异常")
+        failed = next((s for s in stages if not s["ok"]), None)
+        if failed:
+            failure = {
+                "code12_tcp": (EXIT_CODE12, "code12_unreachable", "API联网失败：code12不可达"),
+                "proxy_tcp": (EXIT_PROXY, "proxy_unready", "API联网失败：SSH代理未就绪"),
+                "http_connect": (EXIT_HTTPS, "connect_failed", "API联网失败：HTTPS代理连接失败"),
+                "tls": (EXIT_TLS, "tls_failed", "API联网失败：TLS证书或握手失败"),
+                "api_http": (EXIT_HTTPS, "https_failed", "API联网失败：HTTPS未收到响应"),
+            }[failed["stage"]]
+            return self.finish(*failure, http_status=failed.get("http_status"), stages=stages)
+        by_stage = {s["stage"]: s for s in stages}
+        status = by_stage.get("api_http", {}).get("http_status")
+        if checked.returncode or report.get("network_reachable") is not True or set(by_stage) != known or status is None:
+            return self.finish(EXIT_INTERNAL, "invalid_checker_result", "API联网失败：检查结果不完整", stages=stages)
+        return self.finish(EXIT_OK, "network_ready", "API网络已通，密钥/额度未验证", http_status=status, stages=stages)
+
+    def run(self) -> int:
+        self.started = self.monotonic()
+        self.deadline = self.started + TOTAL_BUDGET_SECONDS
+        self.operation_id = uuid.uuid4().hex
+        self.publish("connecting", "API联网：正在连接…", None)
+        try:
+            # Queue services before probing: a failed first hop must still leave
+            # the existing retrying tunnel and periodic clock recovery enabled.
+            self.service(["enable", TUNNEL, TIMER])
+            self.service(["start", "--no-block", TUNNEL, TIMER])
+            self.service(["start", "--no-block", TIME_SERVICE])
+            if not self.probe("192.168.168.222", 22, 2.0):
+                return self.finish(EXIT_CODE12, "code12_unreachable", "API联网失败：code12不可达")
+            if not self.wait_for_proxy():
+                return self.finish(EXIT_PROXY, "proxy_unready", "API联网失败：SSH代理未就绪")
+            if not self.wait_for_clock():
+                return self.finish(EXIT_CLOCK, "waiting_time", "API联网：正在校时，请稍后重试")
+            return self.check_transport()
+        except (BudgetExpired, subprocess.TimeoutExpired):
+            return self.finish(EXIT_INTERNAL, "service_timeout", "API联网超时：网络服务启动未完成")
+        except ServiceFailure:
+            return self.finish(EXIT_INTERNAL, "service_failed", "API联网失败：网络服务启动失败")
+        except OSError:
+            return self.finish(EXIT_INTERNAL, "helper_error", "API联网失败：联网工具不可用")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--status", action="store_true", help="只读取上一次状态，不更改服务或网络")
+    args = parser.parse_args(argv)
+    if os.geteuid() != 0:
+        print(json.dumps({"state": "permission_denied", "message": "API联网：请由root服务执行"}, ensure_ascii=False))
+        return EXIT_INTERNAL
+    store = StateStore()
+    try:
+        if args.status:
+            print(json.dumps(store.read(), ensure_ascii=False, indent=2))
+            return EXIT_OK
+        with store.acquire():
+            connector = Connector(store)
+            code = connector.run()
+            print(json.dumps(connector.last_result, ensure_ascii=False, indent=2))
+            return code
+    except AlreadyRunning:
+        # Do not overwrite the active operation's shared message or state.
+        print(json.dumps({"state": "busy", "message": "API联网：已有联网进程，请稍候"}, ensure_ascii=False))
+        return EXIT_BUSY
+    except (OSError, ValueError):
+        print(json.dumps({"state": "helper_error", "message": "API联网失败：状态文件不可用"}, ensure_ascii=False))
+        return EXIT_INTERNAL
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

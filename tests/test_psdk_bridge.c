@@ -33,5 +33,8 @@ int main(int argc,char **argv){
  candidate(4,"four");widget_set(DJI_WIDGET_TYPE_BUTTON,0,1,NULL);widget_set(DJI_WIDGET_TYPE_BUTTON,1,1,NULL);cJSON_Delete(pending);pending=NULL;displayed_target=permission.target_index;displayed_ms=mono();command.motion_id=19;widget_set(DJI_WIDGET_TYPE_BUTTON,4,1,NULL);assert(permission.blocked_motion_id==19&&permission.target_index==1); /* complete stops the segment */
  int32_t value=99;widget_get(DJI_WIDGET_TYPE_BUTTON,0,&value,NULL);assert(value==0);
  permission.enabled=false;permission.authority=true;acquire_requested=true;tick();assert(sent_count==0&&obtain_count==0); /* observation mode never sends */
- if(pending)cJSON_Delete(pending);return 0;
+ if (pending) {
+     cJSON_Delete(pending);
+ }
+ return 0;
 }

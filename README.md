@@ -4,9 +4,15 @@
 
 本目录可以独立迁移，不需要引用旁边的 `uav-voice-planner`。但 M300 本体不直接运行 Python：Python 在 Jetson 上运行，C 桥接模块加入现有 PSDK 应用，由该应用调用飞控和遥控器接口。**仍需在机载设备上编译 PSDK 桥接、填写密钥，并完成现场接口验收，不能把本机测试通过视为已经可以直接起飞。**
 
+## 2026-11-02 通信盒代码同步
+
+本次通过 SSH 核对 `code10` 当前源码后，更新 `app/` 中的外置配置读取、ASR 繁简转换、异步请求取消和 API 错误脱敏，并补入独立宿主迁移工具及回归测试。
+
+通信盒现有的 API 联网、三项功能测试按钮及受限 Agent 代码见 [`onboard/code10/`](onboard/code10/README.md)。它们属于当前气球 PSDK 链路的扩展；根目录 `psdk/m300_runtime.c` 仍是另一套宿主桥接，两个控件运行时没有混合注册。本次只同步源码和模板，没有重新部署或改变设备飞行设置。来源与验证见 [本次同步记录](docs/CODE10_SYNC_20261102.md)。
+
 ## 已核对的设备与视觉接口
 
-用户提供的 `offline_balloon_strike_test/PROJECT_OVERVIEW.md` 记录：Jetson Orin NX Engineering Reference Developer Kit、ARM64、Ubuntu 22.04.5 LTS、L4T R36.4.3、Python 3.10。原项目记录的 PSDK 为 3.9.2 beta。整理时设备 SSH 不可达，上述为本地交接资料信息，不是本轮在线设备查询结果。
+用户提供的 `offline_balloon_strike_test/PROJECT_OVERVIEW.md` 记录：Jetson Orin NX Engineering Reference Developer Kit、ARM64、Ubuntu 22.04.5 LTS、L4T R36.4.3、Python 3.10。原项目记录的 PSDK 为 3.9.2 beta。初次整理时设备 SSH 不可达；2026-11-02 已连接 `code10` 核对本文新增组件的源码路径和 SHA-256，未重新执行完整硬件环境验收。
 
 视觉接口沿用这份代码的发布格式：
 
@@ -48,12 +54,19 @@ scripts/                 安装、启动、输入路径绑定和测试
 config/                  现场验收说明
 third_party/             whisper.cpp 和模型的放置说明
 backups/                 原项目源码备份与 SHA-256 清单
-.env                     仅有占位密钥的配置
+migration/               外置私有配置、Jetson检查及独立宿主构建工具
+onboard/code10/          通信盒当前API网络、测试按钮和识别/Agent源码
+.env.example             仅有占位密钥的配置模板
 ```
 
 ## API Key 填在哪里
 
-**编辑本目录根部的 `.env`，把下面这一行中的 `Your API Key` 换成自己的密钥：**
+先把根部 `.env.example` 复制为本地 `.env`，再把 `Your API Key` 换成自己的密钥：
+
+```sh
+cp .env.example .env
+chmod 600 .env
+```
 
 ```dotenv
 OPENAI_API_KEY=Your API Key
@@ -61,11 +74,11 @@ OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_CHAT_MODEL_ID=deepseek-flash
 ```
 
-仓库中的 `.env` 只包含 `Your API Key` 占位符，没有复制旧项目的真实 Key。填写后请保留 `.env` 的仅当前用户可读写权限（`chmod 600 .env`）。
+仓库只跟踪 `.env.example` 占位模板，不跟踪填写后的 `.env`。也可以把私有文件放在源码目录外，通过 `M300_ENV_FILE=/私有路径/runtime.env` 指定；通信盒迁移工具使用 `/home/uav/.config/m300-voice-control/runtime.env`。
 
 若使用学校或其他兼容服务，须同时填写对应的 `OPENAI_BASE_URL` 和有权限的模型名称。模型必须支持 `image_url` 图片输入。服务端的 `deepseek-flash` 名称可能是路由别名，不能据名字推断模型能力，应在目标网络上重新验证。API Key、服务地址、模型名不能跨服务商随意混用。
 
-不要把 `.env` 当 Shell 脚本 `source`。由 Python 配置加载器读取，允许占位值中有空格。填写真实密钥后不要分享或提交该文件；`.env` 已被 Git 跟踪，`.gitignore` 不会阻止它的后续修改进入提交。启动时环境中的 `OPENAI_*`、`UAV_*` 同名项会覆盖 `.env`，排查配置时请留意。
+不要把 `.env` 当 Shell 脚本 `source`。由 Python 配置加载器读取，允许占位值中有空格。真实密钥文件被 `.gitignore` 排除，不能强制加入 Git。启动时环境中的 `OPENAI_*`、`UAV_*` 同名项会覆盖文件配置，排查配置时请留意。
 
 ## 机载安装
 
