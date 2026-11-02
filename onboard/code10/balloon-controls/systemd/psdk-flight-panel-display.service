@@ -1,0 +1,51 @@
+[Unit]
+Description=UAV panel with operator maintenance switch (maintenance on at every start)
+Wants=balloon-yolo-worker.service balloon-liveview-decoder.service balloon-tracker-worker.service
+After=network.target balloon-yolo-worker.service balloon-liveview-decoder.service balloon-tracker-worker.service
+StartLimitIntervalSec=0
+Conflicts=psdk-balloon.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/build_cpp_json_minimal_c_linux/bin
+EnvironmentFile=/etc/uav-voice-command.env
+# Reuse the installed flight profile; the in-process maintenance gate defaults
+# closed. Switching it off permits only a subsequent explicit task start.
+Environment=BALLOON_INPUT_MODE=liveview
+Environment=BALLOON_GIMBAL_STATIC_TEST=0
+Environment=BALLOON_GIMBAL_SEARCH=1
+Environment=BALLOON_BODY_SEARCH=1
+Environment=BALLOON_GIMBAL_SEARCH_YAW_SPEED_DEGPS=14
+Environment=BALLOON_GIMBAL_SEARCH_PITCH_SPEED_DEGPS=8
+Environment=BALLOON_BODY_SEARCH_YAW_RATE_DEGPS=14
+Environment=BALLOON_GIMBAL_ALIGNMENT_DEADBAND_DEG=2.0
+Environment=BALLOON_GIMBAL_RECENTER_ENTER_DEG=12.0
+Environment=BALLOON_GIMBAL_RECENTER_EXIT_DEG=4.0
+Environment=BALLOON_PREDICTION_HORIZON_S=0.15
+Environment=BALLOON_MPC_HORIZON_S=1.2
+Environment=BALLOON_MPC_MAX_ACCEL_MPS2=0.75
+Environment=BALLOON_APPROACH_SPEED_MPS=0.90
+Environment=BALLOON_MIN_APPROACH_SPEED_MPS=0.32
+Environment=BALLOON_BOX_ANGLE_SMALL_DEG=4
+Environment=BALLOON_MAX_VERTICAL_SPEED_MPS=0.12
+Environment=BALLOON_MAX_YAW_RATE_DEGPS=12
+Environment=BALLOON_TARGET_TIMEOUT_MS=800
+Environment=BALLOON_FAR_TARGET_TIMEOUT_MS=1400
+Environment=BALLOON_MIL_MAX_AGE_MS=250
+Environment=BALLOON_MIL_SUPPRESS_AFTER_YOLO_MS=180
+Environment=BALLOON_MAX_VERTICAL_EXCURSION_M=3.0
+ExecCondition=/usr/bin/test -f /var/lib/uav-no-aircraft-commands/maintenance.lock
+ExecStart=/usr/bin/env BALLOON_PANEL_DISPLAY_ONLY=1 BALLOON_NO_FLIGHT=1 BALLOON_GIMBAL_TRACKING=0 BALLOON_AUTO_EXPOSURE=0 BALLOON_PREDICTION_MODE=1 /home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/build_cpp_json_minimal_c_linux/bin/dji_sdk_demo_linux_cxx /home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/dji_sdk_config.json
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+KillMode=control-group
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=20
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

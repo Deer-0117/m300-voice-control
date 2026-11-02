@@ -1,15 +1,17 @@
-# code10 通信盒新增代码
+# code10 当前通信盒代码
 
-2026-11-02 从当前设备源码和已核验本地快照同步。这里收录现有气球 PSDK 链路上新增的 API 网络、遥控器测试按钮与受限识别/规划模块；不改变仓库根部 M300 独立宿主的控件和飞控接口。
+2026-11-02 通过 SSH 读取当前项目源码，归档 `flight-panel-20261102-v4`。本次包括气球 PSDK 控制覆盖层、52 个运行与回归源码文件、现有 Agent/网络脚本和服务配置；另核对设备独立 M300 迁移目录的 38 个文件，与根目录源码一致。
 
 | 目录 | 内容 |
 | --- | --- |
-| [network](network/README.md) | code10→code12 SSH 代理、校时、分层网络检查和 API 联网 helper，含安装/回滚与测试 |
-| [balloon-controls](balloon-controls/README.md) | 当前 Widget 源码覆盖层、中英文布局、ASR/画面/意图测试适配器及隔离测试 |
-| [recognition](recognition/README.md) | 测试实际复用的 ASR、能力网关、任务协调和 Microsoft Agent 源码及服务模板 |
+| [balloon-controls](balloon-controls/README.md) | 十项面板功能、维护开关、控制/预测/采样源文件、中英文布局、宿主入口、服务及核验清单、隔离测试 |
+| [recognition](recognition/README.md) | API 语音候选/执行、任务握手、解码、YOLO/MIL、时间采样/分析、运行回归及 Agent |
+| [network](network/README.md) | 现有代理、校时、网络分层检查与 API 联网工具 |
 
-主界面 18–23 保留当前任务操作，配置页 26–29 为 API 联网、语音识别测试、画面识别测试、任务意图测试。功能测试只回显识别结果，保留任务互斥、取消及录音隔离。它们不提交或执行测试计划。
+设置列表包含维护开关和九项任务/诊断操作；主界面六个快捷入口共享相同状态。维护默认开启，关闭仅允许随后显式启动实机任务；开关本身不发送运动指令。完整操作和门禁见 [面板说明](balloon-controls/README.md)。
 
-部署位置仍对应现有 `/home/uav/offline_balloon_strike_test`、`/opt/uav-microsoft-agent`、`/home/uav/m300-migration-v1` 和现有完整 PSDK。网络安装器有显式安装入口；Widget 覆盖层需要在完整 SDK 内单独构建，不能整目录覆盖根部 `psdk/` 或与另一套 Widget 同时启动。
+部署仍对应 `/home/uav/offline_balloon_strike_test`、`/opt/uav-microsoft-agent`、`/home/uav/m300-migration-v1` 及设备完整 SDK。根部 `psdk/m300_runtime.c` 属于另一套独立宿主；不能把覆盖层放入根 `psdk/` 或同时注册两套 Widget。当前源码不是完整 DJI SDK或一键飞行部署包。
 
-真实 API Key、鉴权令牌、SSH 私钥、设备账户配置、模型、虚拟环境、运行日志、音视频和二进制未收录。`SOURCE_MANIFEST.json` 记录此次核对的源码路径和哈希；源码同步不证明本次已重新部署或完成飞行验证。
+[SOURCE_MANIFEST.json](SOURCE_MANIFEST.json) 记录 136 项设备文件的路径、设备哈希与仓库哈希。除一个测试文件按 v4 已验证版本和仓库路径适配外，导出文件字节与设备一致。新增面板测试和说明属于打包内容；不伪称设备上所有测试文件都已安装更新。
+
+实际 Key、令牌、SSH 私钥、DJI 账户文件、模型、虚拟环境、运行数据和二进制不收录。此次仓库同步不改变设备模式或启动任务。构建及现场验收边界见 [同步记录](../../docs/CODE10_SYNC_20261102.md)。

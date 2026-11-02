@@ -1,44 +1,52 @@
-# code10 API 测试按钮与气球 PSDK 覆盖层
+# code10 测试面板与 PSDK 控制覆盖层
 
-此目录保存 2026-11-02 通信盒已安装的 API 联网与功能测试按钮源码。`SOURCE_MANIFEST.json` 记录机载路径和 SHA-256；薄适配器、Widget C、两份布局及本地头文件均来自已核对的部署文件。
+本目录对应 2026-11-02 通信盒实际安装的 `flight-panel-20261102-v4`。`SOURCE_MANIFEST.json` 可逐项核对当前设备路径和 SHA-256。这里的 32 个 SDK 文件包括 Widget、控制/预测、相机采样、两语言布局/图标，以及 Linux 宿主入口与 CMake；不包含账户配置或平台库。
 
-本目录用于现有 `psdk-balloon.service` 对应的气球控制 PSDK 工程。仓库根部的 `psdk/m300_runtime.c` 是另一套宿主集成；本次归档没有将两个 Widget/控制运行时合并，也没有在通信盒上安装、重启或启动任务。
+## 十项功能
 
-## 文件和运行依赖
-
-- `scripts/uav-api-functional-test`：机载 `/usr/local/bin/uav-api-functional-test` 的原样源码，分别调用既有 ASR、视觉和意图接口，不新增识别客户端。
-- `psdk-overlay/samples/sample_c/module_sample/balloon_widget/`：Widget 实现、中文/英文布局及引用的项目头文件。目录结构对应设备完整 SDK 下的相对位置。
-- `tests/`：现有 19 项 Python 适配测试、六项 C 隔离测试以及当前两语言布局与 C 处理项的一致性检查。
-
-运行时仍需要设备已有的完整 DJI PSDK 3.9.2 工程、平台适配与链接库、`balloon_photo_detector` 实现和 `widget/test_widget_speaker.h`。它们没有随本覆盖层复制为一套完整 SDK。识别模块来源与依赖见 [识别代码说明](../recognition/README.md)，联网脚本见 [网络组件](../network/README.md)。
-
-适配器保持设备路径：ASR 来自 `/home/uav/offline_balloon_strike_test/uav_voice_command.py::transcribe`；意图来自 `/opt/uav-microsoft-agent/app/uav_microsoft_agent.py::interpret_with_agent`；视觉来自 `/home/uav/m300-migration-v1/app/{vision,model}.py`。Python 环境、模型、API Key 和服务配置需由现场独立管理。
-
-## 当前按钮
-
-| 页面 | 编号 | 操作 |
+| 设置列表 ID | 名称 | 行为 |
 | --- | --- | --- |
-| 主界面 | 18–23 | 任意撞击、粉黄撞击、执行语音、停止、录像、跳过 |
-| 配置页 | 24 | 检查网络连接 |
-| 配置页 | 26 | API 联网 |
-| 配置页 | 27 | 语音识别测试：等待下一段新录音并仅回显文字 |
-| 配置页 | 28 | 画面识别测试：获取新实时帧并仅回显描述 |
-| 配置页 | 29 | 任务意图测试：使用近期 ASR 文本或示例，仅回显理解结果 |
-| 配置页 | 25 | 清除待执行语音任务 |
+| 69 | 仅显示/维护 | 默认开启；关闭进入实机测试待命，另点任务按钮才执行。 |
+| 60 | 开始测试 | 任意气球任务，固定开启录像，按计划/录像确认后放行。 |
+| 61 | API联网 | 原代理和校时链路的网络检查，不校验密钥或额度。 |
+| 52 | 相机/姿态采样 | 地面静止确认后 30 秒采样，完成不代表时间标定有效。 |
+| 53 | 部署/标定核验 | 分别报告文件、运行二进制及本次开机标定。 |
+| 54 | Kalman预测模式 | 开启需通过严格标定检查，任务空闲时选择，下次任务生效。 |
+| 65 | 执行API语音任务 | 确认本次 API 候选并执行；校验会话、时效及任务令牌。 |
+| 66 | 新增API语音任务 | 首次停止旧任务并提示录音；识别后第二次点击才交 API 决策并执行新计划。 |
+| 67 | 清除候选语音任务 | 取消本轮候选与识别；不停止已经运行的飞行任务。 |
+| 68 | 停止测试 | 取消准备及控制任务，等待资源清理和控制权释放。 |
 
-功能测试回显以“仅测试”开头，并包含“未执行任务”。测试使用独立进程和结果目录，保留超时、取消、相机资源互斥及测试录音隔离。测试 worker 禁用生产计划写入口；这是应用代码隔离，不是操作系统沙箱。停止按钮负责取消测试并清理资源。API 联网仅验证代理/HTTPS，成功不代表 API Key、模型权限或额度有效。
+主界面 50、51、55、56、57、58 六个快捷入口分别映射同名功能。共 16 个唯一控件 ID，十个逻辑功能；旧 18–29 回调被拒绝。C 与中英文 JSON 必须成套使用。刷新界面请退出再进入 PSDK 设置列表并滚动查看。
 
-此版本的 26–29 编号专用于 API 功能，不能混用其他仓库将这些编号映射为任务快捷按钮的布局或二进制。完整 SDK 集成时，C 与中英文 JSON 必须成套构建和验证；本目录没有自动安装入口。原来的日期专用部署器绑定旧文件哈希和一次性暂存目录，未作为可重用部署工具收录。
+维护开启时控制器初始化、任务和实机采样均被阻止。关闭开关仅改变本进程待命模式，不启动任务、申请控制权或转动云台；随后显式启动任务可以产生真实飞行/云台指令。两方向切换都要求任务、语音处理、采样、控制权及资源清理完成；忙时先按停止并等待。切换清候选、旧门及采样确认，预测复位 1；同值回调无副作用。每次进程启动都回到维护，未沿用旧 OFF 状态。
+
+控制模式由显式运行时接口统一决定，服务里的 `BALLOON_NO_FLIGHT=1` 与 `GIMBAL_TRACKING=0` 仅为启动基线；维护关闭后的真实状态以开关回读为准。手动接管锁存和释放失败状态均会阻止自动重新申请/开启任务，停止不等于可恢复暂停。
+
+## 文件与集成
+
+- `psdk-overlay/`：相对于设备完整 SDK 的项目源文件；保留 PSDK 3.9.2 实际路径。
+- `systemd/psdk-flight-panel-display.service`：现有面板服务配置，启动默认维护并沿用 liveview/视觉 worker 和控制参数。
+- `deployment/flight_panel_manifest.json`：当前安装的源码和二进制哈希核验清单；用于运行时只读部署检查。
+- `scripts/uav-api-functional-test`：保留设备已有的独立 API 诊断适配器源码；本版面板不再注册旧 27–29 诊断按钮。
+- `tests/`：真实函数/控制适配层加 SDK 替身；没有链接 DJI 库或飞行输出。
+
+运行模块位于 [recognition/runtime](../recognition/README.md)，网络工具见 [network](../network/README.md)。需要外置凭据、完整官方 SDK/平台适配与链接库、已有 Python 环境和模型。服务还要求旧 `psdk-balloon.service` 停用、原维护锁存在，避免双 SDK 宿主；这些前置条件不等于已经批准实机任务。本次不附带绑定一次性暂存目录的自动安装/解锁脚本。
+
+只复制源码时仍需在设备 SDK 内完整重建并更新二进制核验清单，不能把此处 ARM64 二进制哈希用于另一套构建。当前无有效时间标定；采样和相对延迟估计不得直接写成有效曝光/姿态物理延迟。
 
 ## 本地验证
 
-在此目录运行：
+在本目录运行：
 
 ```sh
 python3 -B -m unittest discover -s tests -v
-python3 -B tests/run_widget_isolation.py
+TEST_PSDK_ROOT=/path/to/full-or-public-sdk python3 -B -m unittest discover -s tests -v
+python3 -B tests/run_authority_stop.py --sdk-root /path/to/sdk
+bash tests/run_native_no_aircraft.sh /path/to/sdk /tmp/panel-native-tests
+PYTHONPATH=../recognition/runtime python3 -B -m unittest discover -s ../recognition/runtime -v
 ```
 
-第二条需要 POSIX C 编译器和 pthread。它从本目录的真实 Widget 源码抽取六个被测函数，再使用 SDK 替代函数和故障注入验证取消、相机清理、线程/进程创建失败及录音隔离；不会连接设备或调用真实 API。临时 C 文件、二进制和 PCM 在系统临时目录中清理，不进入 Git。
+`TEST_PSDK_ROOT` 提供 `psdk_lib/include` 和 `samples/sample_c/module_sample/utils/cJSON.c`，未指定时仅控制适配层用例会明确跳过。其余面板/语音/核验测试直接使用本仓库源码。原生脚本面向 Linux GCC；macOS 可运行 Python 与编译替身测试。测试需要 Python 3.10+，运行回归另外需要 NumPy、Pillow，生产视觉还需设备现有 OpenCV/TensorRT 等依赖。
 
-这些结果不等同于完整 ARM64 SDK 链接、当前实机摄像头验收或飞行验证。凭据、录音、画面、运行结果、部署日志、原件备份和二进制均未收录。
+设备 v4 的 ARM64 构建、177 项 Python 和原生控制回归已通过；用户确认十项显示与维护 ON。实机来回切换、真实相机采样、任务执行和飞行均未完成验收。本次仓库同步不连接飞机执行控制，不增加实际云端请求。具体验证记录见 [本次同步记录](../../../docs/CODE10_SYNC_20261102.md)。

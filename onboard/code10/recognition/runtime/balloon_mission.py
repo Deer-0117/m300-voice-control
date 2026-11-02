@@ -137,7 +137,7 @@ class MissionGate:
                 atomic_text(HEALTH, f'{token}\t{clock_id()}\t{current}\n')
                 color = actions[sequence.current_index].get('parameters', {}).get('color', 'stop')
                 colors = {'pink': '粉色', 'yellow': '黄色', 'any': '任意气球'}
-                title = {'pink': '粉→黄', 'any': '任意气球', 'voice': '语音任务', 'next': '继续剩余目标'}[request['mode']]
+                title = {'pink': '粉→黄', 'any': '任意气球', 'voice': 'API语音任务', 'api_new': '新API语音任务', 'next': '继续剩余目标'}[request['mode']]
                 recording = '关闭'
                 if request['record']:
                     try:
@@ -174,21 +174,25 @@ def strike_actions(colors) -> list[dict]:
     return [dict(capability='strike_balloon', parameters=dict(color=color)) for color in colors]
 
 
-def prepare(mode: str, token: str, record: bool) -> None:
+def prepare(mode: str, token: str, record: bool, voice_session: str | None = None) -> None:
     if not token or len(token) > 95 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in token):
         raise ValueError("invalid mission token")
     if not token_matches(token):
         raise ValueError('启动已取消')
-    if mode == 'voice':
+    api_decision = None
+    if mode in ('voice', 'api_new'):
         # Confirmation can perform a remote request. The C epoch check and
         # token check below reject a result that arrives after Stop.
         from uav_voice_command import confirm
         previous_id = read_json(PLAN).get('plan_id') if PLAN.exists() else None
-        confirm()
+        confirmation = confirm(session=voice_session, mission_token=token, allow_deferred=mode == 'api_new')
         plan = read_json(PLAN)
         if plan.get('plan_id') == previous_id:
             raise ValueError('语音未生成新的本机计划')
         actions = validate_actions(plan['actions'])
+        if not isinstance(confirmation, dict) or confirmation.get('plan', {}).get('plan_id') != plan.get('plan_id'):
+            raise ValueError('API确认未返回匹配的本机计划')
+        api_decision = confirmation['api_decision']
     elif mode == 'next':
         old = read_json(PLAN)
         state = read_json(STATE)
@@ -207,6 +211,8 @@ def prepare(mode: str, token: str, record: bool) -> None:
         raise ValueError('启动已取消，迟到结果已拒绝')
     # A new immutable plan for every start, including explicit any-balloon.
     plan = dict(version=2, plan_id=uuid.uuid4().hex, actions=actions, source='widget_' + mode)
+    if api_decision is not None:
+        plan['api_decision'] = api_decision
     atomic_json(PLAN, plan)
     atomic_json(STATE, dict(plan_id=plan['plan_id'], status='queued', current_index=0))
     STOP.unlink(missing_ok=True)
@@ -264,8 +270,9 @@ def wait_record(token: str, timeout: float = 12.0) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=('any', 'pink', 'voice', 'next'))
+    parser.add_argument('--mode', choices=('any', 'pink', 'voice', 'api_new', 'next'))
     parser.add_argument('--token', required=True)
+    parser.add_argument('--voice-session')
     parser.add_argument('--record', type=int, choices=(0, 1), default=1)
     parser.add_argument('--wait-record', action='store_true')
     args = parser.parse_args()
@@ -275,7 +282,7 @@ def main() -> int:
         else:
             if not args.mode:
                 raise ValueError('缺少任务类型')
-            prepare(args.mode, args.token, bool(args.record))
+            prepare(args.mode, args.token, bool(args.record), args.voice_session)
         return 0
     except Exception as exc:
         atomic_text(MESSAGE, str(exc))

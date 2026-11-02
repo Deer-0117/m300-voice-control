@@ -1,56 +1,259 @@
 {
-  "device": "code10",
   "checked_date": "2026-11-02",
+  "device": "code10",
+  "release_id": "flight-panel-20261102-v4",
+  "method": "Selected current project sources read over SSH; private configs and runtime data excluded. Every production source is byte-identical to the exported device file; test-only packaging changes are recorded.",
   "files": [
-    {
-      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
-      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
-      "sha256": "4c51a13890b33a2f0509a6c7fa15635dfc693a5915add6e761072e178e5b3d2f"
-    },
     {
       "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.h",
       "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.h",
-      "sha256": "36806cec44ad6e51836f1c9efdc45d02ef71d22f0ffd77a31f8b0d2b756ee3ec"
+      "device_sha256": "36806cec44ad6e51836f1c9efdc45d02ef71d22f0ffd77a31f8b0d2b756ee3ec",
+      "sha256": "36806cec44ad6e51836f1c9efdc45d02ef71d22f0ffd77a31f8b0d2b756ee3ec",
+      "modified_for_packaging": false
     },
     {
-      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
-      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
-      "sha256": "f6551fb3741304c5dbd59616ed7c962eff0fa75c4044e94c10c8de3118873203"
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_chase_probe.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_chase_probe.h",
+      "device_sha256": "978384ba93fcf3af15a391f2e82f9749c99fba870f13d7a323f9ceb3e6e8b510",
+      "sha256": "978384ba93fcf3af15a391f2e82f9749c99fba870f13d7a323f9ceb3e6e8b510",
+      "modified_for_packaging": false
     },
     {
       "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_clock.h",
       "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_clock.h",
-      "sha256": "341223a1c982f1a1eb7e1bc4fc78fa89790ea72294e4458fb6fea219871861f1"
-    },
-    {
-      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
-      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
-      "sha256": "66c1785b79647d2c49b66841dbb9c4eb2cb0c54aeeeffcb20d1930fe02eadef1"
+      "device_sha256": "341223a1c982f1a1eb7e1bc4fc78fa89790ea72294e4458fb6fea219871861f1",
+      "sha256": "341223a1c982f1a1eb7e1bc4fc78fa89790ea72294e4458fb6fea219871861f1",
+      "modified_for_packaging": false
     },
     {
       "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_mission_gate.h",
       "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_mission_gate.h",
-      "sha256": "157c84bd11b5c3bae8d5036eb9f2747de5b28237bee119bc880f0dffbadadc26"
+      "device_sha256": "157c84bd11b5c3bae8d5036eb9f2747de5b28237bee119bc880f0dffbadadc26",
+      "sha256": "157c84bd11b5c3bae8d5036eb9f2747de5b28237bee119bc880f0dffbadadc26",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_timing_capture.h",
+      "device_sha256": "f1f17bb160514615f5c711294d2e5f6510e29d63c56dc2940062a0c3ed14d39f",
+      "sha256": "f1f17bb160514615f5c711294d2e5f6510e29d63c56dc2940062a0c3ed14d39f",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_performance.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_performance.h",
+      "device_sha256": "d5797bb2774c086a0c2b8fe573458292a7114765a2efea011eb9405de514c02c",
+      "sha256": "d5797bb2774c086a0c2b8fe573458292a7114765a2efea011eb9405de514c02c",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
+      "device_sha256": "a9dacff46121bc90f1aa3ffbe60680399edec80e4406a7fc8b4102507e68c21e",
+      "sha256": "a9dacff46121bc90f1aa3ffbe60680399edec80e4406a7fc8b4102507e68c21e",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.c",
+      "device_sha256": "b0b02f1a7db10d92d41be93317b683abc457833e796704366e7450124c7b53d7",
+      "sha256": "b0b02f1a7db10d92d41be93317b683abc457833e796704366e7450124c7b53d7",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.h",
+      "device_sha256": "f6551fb3741304c5dbd59616ed7c962eff0fa75c4044e94c10c8de3118873203",
+      "sha256": "f6551fb3741304c5dbd59616ed7c962eff0fa75c4044e94c10c8de3118873203",
+      "modified_for_packaging": false
     },
     {
       "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_evidence.h",
       "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_evidence.h",
-      "sha256": "65983a2208777ef986dbc792d8681efd81f0fdc3abaea6d93bb7ee53bd47e7f3"
+      "device_sha256": "65983a2208777ef986dbc792d8681efd81f0fdc3abaea6d93bb7ee53bd47e7f3",
+      "sha256": "65983a2208777ef986dbc792d8681efd81f0fdc3abaea6d93bb7ee53bd47e7f3",
+      "modified_for_packaging": false
     },
     {
-      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
-      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
-      "sha256": "f61b568ad3dee770197be2c33d0719d9675028dd51279b221fb99d5da5417d17"
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_flight_panel.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_flight_panel.h",
+      "device_sha256": "207430a9687aa5ffc69b0afd3f6eec48d56d5feee2f5d961bcaeca1a4f1e34ab",
+      "sha256": "207430a9687aa5ffc69b0afd3f6eec48d56d5feee2f5d961bcaeca1a4f1e34ab",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/balloon_chase_probe.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_chase_probe.c",
+      "device_sha256": "979973c8702ec51836e61dd7433dbd6c5c3a26c7e6fcde1e02122fe5fc850470",
+      "sha256": "979973c8702ec51836e61dd7433dbd6c5c3a26c7e6fcde1e02122fe5fc850470",
+      "modified_for_packaging": false
     },
     {
       "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/widget_config.json",
       "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/widget_config.json",
-      "sha256": "23350d63491dfbde1519dc5725f12dad87bef032ad1ebfc4011b63832965bd87"
+      "device_sha256": "ff065cbf99cd765cc1457ccfc50c8eca6ba6fcc4486ec9a861620e26dd7ed029",
+      "sha256": "ff065cbf99cd765cc1457ccfc50c8eca6ba6fcc4486ec9a861620e26dd7ed029",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
+      "device_sha256": "4e6569a6899bf46053e7b3f8fb9b463c6c8fba2ddc851d4f3c1b364c53adde1d",
+      "sha256": "4e6569a6899bf46053e7b3f8fb9b463c6c8fba2ddc851d4f3c1b364c53adde1d",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/icon_button2.png",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/icon_button2.png",
+      "device_sha256": "8a342dada948cad8303821e8b501973e4770ceb6b9b518aa743b78c73b655f0c",
+      "sha256": "8a342dada948cad8303821e8b501973e4770ceb6b9b518aa743b78c73b655f0c",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/icon_button2.png",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/icon_button2.png",
+      "device_sha256": "8a342dada948cad8303821e8b501973e4770ceb6b9b518aa743b78c73b655f0c",
+      "sha256": "8a342dada948cad8303821e8b501973e4770ceb6b9b518aa743b78c73b655f0c",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_plan_cli.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_plan_cli.c",
+      "device_sha256": "0fae43a24e78c6cbf7dfb3b4ad66376d6dbc961c1d6ee05ce611580689f72eae",
+      "sha256": "0fae43a24e78c6cbf7dfb3b4ad66376d6dbc961c1d6ee05ce611580689f72eae",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/prediction_native.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/prediction_native.c",
+      "device_sha256": "ce191cae92348424723b2f9e961c0eb02a49e9fc06c20d19769b9f2b530d637e",
+      "sha256": "ce191cae92348424723b2f9e961c0eb02a49e9fc06c20d19769b9f2b530d637e",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_delayed_kf.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_delayed_kf.h",
+      "device_sha256": "6ff40a6de32da371d9b61b030d4e63d9558ffb747b44c8ea4ad4a63cb029d02e",
+      "sha256": "6ff40a6de32da371d9b61b030d4e63d9558ffb747b44c8ea4ad4a63cb029d02e",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_delayed_kf_test.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_delayed_kf_test.c",
+      "device_sha256": "2a8228fd98dc5635124367fea84b0146f5860e3105dd398164875554fcfbbd4a",
+      "sha256": "2a8228fd98dc5635124367fea84b0146f5860e3105dd398164875554fcfbbd4a",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/dji_target_chase_task.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/dji_target_chase_task.c",
+      "device_sha256": "21a36073250fb4f7099c838d83114e7b69d55b4aa89420b992436181b7d98a27",
+      "sha256": "21a36073250fb4f7099c838d83114e7b69d55b4aa89420b992436181b7d98a27",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase.c",
+      "device_sha256": "a36f1b620649f268df3e06288fefa40c81207c3da0219f7bbcbcdfdc337d9b77",
+      "sha256": "a36f1b620649f268df3e06288fefa40c81207c3da0219f7bbcbcdfdc337d9b77",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase.h",
+      "device_sha256": "3c641cec3202ca1df8912f5a8da881d690b74f1883048d5595fb4fd911b79598",
+      "sha256": "3c641cec3202ca1df8912f5a8da881d690b74f1883048d5595fb4fd911b79598",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_timing_alignment_test.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_timing_alignment_test.c",
+      "device_sha256": "e003f299324b8f39cbb6ca8131b70ce94ff0693ec29a1f4587a71a63fddd0bb0",
+      "sha256": "e003f299324b8f39cbb6ca8131b70ce94ff0693ec29a1f4587a71a63fddd0bb0",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_motion_comp_test.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_motion_comp_test.c",
+      "device_sha256": "34f8b571c829c484c9b400ccea95ea9055e84d14b247e986aab893f0181e6bc3",
+      "sha256": "34f8b571c829c484c9b400ccea95ea9055e84d14b247e986aab893f0181e6bc3",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/dji_target_chase_task.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/dji_target_chase_task.h",
+      "device_sha256": "62a40943716bb9d98c761b6d9c075e73d50b408a15d4ebd4b8c31aa89e6b2cfb",
+      "sha256": "62a40943716bb9d98c761b6d9c075e73d50b408a15d4ebd4b8c31aa89e6b2cfb",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_timing_alignment.h",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_timing_alignment.h",
+      "device_sha256": "a6675ce9aeae372ace94d24de961eaeb680eaece30a62651b83891220a2cdf57",
+      "sha256": "a6675ce9aeae372ace94d24de961eaeb680eaece30a62651b83891220a2cdf57",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c/module_sample/target_chase/target_chase_delayed_control_test.c",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/target_chase_delayed_control_test.c",
+      "device_sha256": "73734bdc76a4cbd67f252fc4fd46651dfc7af1cfdba14bd40d118c4a05dad08f",
+      "sha256": "73734bdc76a4cbd67f252fc4fd46651dfc7af1cfdba14bd40d118c4a05dad08f",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c++/platform/linux/manifold2/application/main.cpp",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/main.cpp",
+      "device_sha256": "2863d91a1d67be7188ed89ca13d47a6baf8904a6a6497cf67c670b92a10c83fd",
+      "sha256": "2863d91a1d67be7188ed89ca13d47a6baf8904a6a6497cf67c670b92a10c83fd",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c++/platform/linux/manifold2/application/application.cpp",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/application.cpp",
+      "device_sha256": "1a0b5df2019c239157a456a7e0c1def53600ef0fb4c10b854d2009651f46e94a",
+      "sha256": "1a0b5df2019c239157a456a7e0c1def53600ef0fb4c10b854d2009651f46e94a",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c++/platform/linux/manifold2/application/application.hpp",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/application.hpp",
+      "device_sha256": "9b65d5b5c4f4e2c1836b27d61fe79ee31ffa109c229fc6d42d93a9ee91efe312",
+      "sha256": "9b65d5b5c4f4e2c1836b27d61fe79ee31ffa109c229fc6d42d93a9ee91efe312",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "psdk-overlay/samples/sample_c++/platform/linux/manifold2/CMakeLists.txt",
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/CMakeLists.txt",
+      "device_sha256": "7162d8b6d54dd750fcd971c4a4b89f64f8c23c943f992cb6c8d96652037d4df3",
+      "sha256": "7162d8b6d54dd750fcd971c4a4b89f64f8c23c943f992cb6c8d96652037d4df3",
+      "modified_for_packaging": false
     },
     {
       "path": "scripts/uav-api-functional-test",
       "device_path": "/usr/local/bin/uav-api-functional-test",
-      "sha256": "601d4b371c6fd18658d0a68b8b3c8c673997b8f0014bad22dc869ab41cd7782e"
+      "device_sha256": "601d4b371c6fd18658d0a68b8b3c8c673997b8f0014bad22dc869ab41cd7782e",
+      "sha256": "601d4b371c6fd18658d0a68b8b3c8c673997b8f0014bad22dc869ab41cd7782e",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "systemd/psdk-flight-panel-display.service",
+      "device_path": "/etc/systemd/system/psdk-flight-panel-display.service",
+      "device_sha256": "6e03e1d85fd946fac60d03a66be71f147fb5c446dd675d854495ab30213e618b",
+      "sha256": "6e03e1d85fd946fac60d03a66be71f147fb5c446dd675d854495ab30213e618b",
+      "modified_for_packaging": false
+    },
+    {
+      "path": "deployment/flight_panel_manifest.json",
+      "device_path": "/home/uav/offline_balloon_strike_test/flight_panel_manifest.json",
+      "device_sha256": "3c826ab8d4b8805132c1ee11d616f2b4b12d032b3a0104731d607f455f14bbb2",
+      "sha256": "3c826ab8d4b8805132c1ee11d616f2b4b12d032b3a0104731d607f455f14bbb2",
+      "modified_for_packaging": false
     }
-  ]
+  ],
+  "packaging_changes": [
+    "Validated v4 panel tests added with repository-relative paths; obsolete 18–29 widget fixture replaced.",
+    "runtime/test_mission_buttons.py uses the staged v4 regression instead of the old test file left on the device.",
+    "Public SDK headers and cJSON remain external test/build dependencies (TEST_PSDK_ROOT or --sdk-root)."
+  ],
+  "scope": "Current balloon runtime/control overlay, existing API/network/Agent and independent M300 migration sources; not a full device image or complete SDK."
 }

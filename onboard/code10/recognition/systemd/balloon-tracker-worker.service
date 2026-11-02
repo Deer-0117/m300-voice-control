@@ -1,0 +1,25 @@
+# MIL provides cheap inter-frame continuity; fresh YOLO observations always
+# correct it, and its timestamp/sequence marker remains distinguishable.
+[Unit]
+Description=YOLO-corrected OpenCV MIL Balloon Tracker
+After=local-fs.target balloon-liveview-decoder.service
+Wants=balloon-liveview-decoder.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/uav/offline_balloon_strike_test
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/bin/rm -f /home/uav/offline_balloon_strike_test/latest_yolo_target.tsv
+ExecStart=/usr/bin/python3 /home/uav/offline_balloon_strike_test/balloon_tracker_worker.py --poll-ms 10 --max-tracker-age-ms 700 --handoff-delay-ms 180 --max-catchup-frames 4
+Restart=always
+RestartSec=1
+Nice=5
+# Tracker is lower priority than decoding and YOLO to protect fresh detections.
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

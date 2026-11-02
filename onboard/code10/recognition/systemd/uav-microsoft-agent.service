@@ -1,5 +1,3 @@
-# Constrained planner service: model output is validated against the capability
-# schema and cannot contain velocity, attitude, altitude, or joystick values.
 [Unit]
 Description=Microsoft Agent Framework UAV Capability Planner
 After=network-online.target
@@ -11,7 +9,6 @@ User=uav
 Group=uav
 WorkingDirectory=/opt/uav-microsoft-agent/app
 Environment=PYTHONUNBUFFERED=1
-# Optional env files hold local proxy settings and secrets outside Git.
 EnvironmentFile=-/etc/uav-relay-proxy.env
 EnvironmentFile=-/etc/uav-code12-proxy.env
 EnvironmentFile=-/etc/uav-microsoft-agent.env
@@ -19,7 +16,6 @@ ExecStart=/opt/uav-microsoft-agent/venv/bin/python /opt/uav-microsoft-agent/app/
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
-# Hardening still permits the dedicated state directory required by the service.
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=false

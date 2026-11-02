@@ -119,13 +119,42 @@ static void BalloonTiming_Tick(bool busy)
         BalloonTiming_PoseProblem(end, reason, code);
         return;
     }
-    if (haveStamp && stamp.millisecond == lastStamp.millisecond &&
+    /* GetLatest may initially return an all-zero sample or the previous
+     * subscription's cache with a newly measured host read time. Never turn
+     * that first successful read into a new measurement. A nonzero baseline
+     * and a subsequent advancing device sample are required after every
+     * subscription (including a borrowed one) or timestamp reset. */
+    if (stamp.millisecond == 0 && stamp.microsecond == 0) {
+        haveStamp = false;
+        BalloonTiming_PoseProblem(end, "zero SDK timestamp; pose warmup required", code);
+        return;
+    }
+    if (!haveStamp) {
+        lastStamp = stamp;
+        haveStamp = true;
+        BalloonTiming_PoseProblem(end, "SDK sample baseline only; waiting for progression", code);
+        return;
+    }
+    if (stamp.millisecond == lastStamp.millisecond &&
         stamp.microsecond == lastStamp.microsecond) {
         BalloonTiming_PoseProblem(end, "SDK timestamp unchanged; host time is not a new sample", code);
         return;
     }
+    /* Serial comparison of the uint32 fields tolerates normal counter wrap.
+     * Order by milliseconds, consulting microseconds only within the same
+     * millisecond; do not assume the two fields share a scale/epoch or derive
+     * an exposure time from them. A reverse/ambiguous half-range transition
+     * invalidates the baseline and leaves a visible gap while warming up.
+     * Captures last at most 65 seconds, not half a uint32 millisecond cycle. */
+    uint32_t deltaMs = (uint32_t)(stamp.millisecond - lastStamp.millisecond);
+    uint32_t deltaUs = (uint32_t)(stamp.microsecond - lastStamp.microsecond);
+    if (deltaMs >= UINT32_C(0x80000000) ||
+        (deltaMs == 0 && deltaUs >= UINT32_C(0x80000000))) {
+        haveStamp = false;
+        BalloonTiming_PoseProblem(end, "SDK timestamp reversed/reset; pose warmup required", code);
+        return;
+    }
     lastStamp = stamp;
-    haveStamp = true;
     if (!BalloonClock_Id(clockId)) return;
     FILE *log = fopen(BALLOON_TIMING_LOG, "a");
     if (!log) return;

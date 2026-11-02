@@ -1,0 +1,139 @@
+{
+  "release_id": "flight-panel-20261102-v4",
+  "files": [
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/psdk_balloon_widget.c",
+      "sha256": "a9dacff46121bc90f1aa3ffbe60680399edec80e4406a7fc8b4102507e68c21e"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_photo_detector.c",
+      "sha256": "b0b02f1a7db10d92d41be93317b683abc457833e796704366e7450124c7b53d7"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/balloon_flight_panel.h",
+      "sha256": "207430a9687aa5ffc69b0afd3f6eec48d56d5feee2f5d961bcaeca1a4f1e34ab"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/dji_target_chase_task.c",
+      "sha256": "21a36073250fb4f7099c838d83114e7b69d55b4aa89420b992436181b7d98a27"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/target_chase/dji_target_chase_task.h",
+      "sha256": "62a40943716bb9d98c761b6d9c075e73d50b408a15d4ebd4b8c31aa89e6b2cfb"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/cn_big_screen/widget_config.json",
+      "sha256": "4e6569a6899bf46053e7b3f8fb9b463c6c8fba2ddc851d4f3c1b364c53adde1d"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file/en_big_screen/widget_config.json",
+      "sha256": "ff065cbf99cd765cc1457ccfc50c8eca6ba6fcc4486ec9a861620e26dd7ed029"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/application.cpp",
+      "sha256": "1a0b5df2019c239157a456a7e0c1def53600ef0fb4c10b854d2009651f46e94a"
+    },
+    {
+      "device_path": "/home/uav/offline_balloon_strike_test/uav_voice_command.py",
+      "sha256": "cddfdd8a04f6c2e5a99d8c73ff89fe8d7f05ca842c11fbb15981dfce00e81127"
+    },
+    {
+      "device_path": "/home/uav/offline_balloon_strike_test/balloon_mission.py",
+      "sha256": "69b8dae689002f64089f3fe495168dfdf3fc577c8632ac797a0292afddd6a177"
+    },
+    {
+      "device_path": "/home/uav/offline_balloon_strike_test/flight_panel_tools.py",
+      "sha256": "f670ab6287891c93e309cbed829e1b1f62319b8ce09366019f63688db3f0e557"
+    },
+    {
+      "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/application/main.cpp",
+      "sha256": "2863d91a1d67be7188ed89ca13d47a6baf8904a6a6497cf67c670b92a10c83fd"
+    }
+  ],
+  "binary": {
+    "device_path": "/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c++/platform/linux/manifold2/build_cpp_json_minimal_c_linux/bin/dji_sdk_demo_linux_cxx",
+    "sha256": "11c9528217dd097345503bf049de7d6a3999f2f97110d8c92e5816017a1c3d09"
+  },
+  "widget_schema": [
+    [
+      "main",
+      50,
+      "button"
+    ],
+    [
+      "main",
+      51,
+      "button"
+    ],
+    [
+      "main",
+      55,
+      "button"
+    ],
+    [
+      "main",
+      56,
+      "button"
+    ],
+    [
+      "main",
+      57,
+      "button"
+    ],
+    [
+      "main",
+      58,
+      "button"
+    ],
+    [
+      "config",
+      69,
+      "switch"
+    ],
+    [
+      "config",
+      60,
+      "button"
+    ],
+    [
+      "config",
+      61,
+      "button"
+    ],
+    [
+      "config",
+      52,
+      "button"
+    ],
+    [
+      "config",
+      53,
+      "button"
+    ],
+    [
+      "config",
+      54,
+      "switch"
+    ],
+    [
+      "config",
+      65,
+      "button"
+    ],
+    [
+      "config",
+      66,
+      "button"
+    ],
+    [
+      "config",
+      67,
+      "button"
+    ],
+    [
+      "config",
+      68,
+      "button"
+    ]
+  ]
+}

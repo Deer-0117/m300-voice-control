@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-02",
+  "release_id": "flight-panel-20261102-v4",
+  "source_snapshot_files": 136,
+  "source_byte_identical": 135,
+  "packaging_modified_device_files": [
+    "onboard/code10/recognition/runtime/test_mission_buttons.py"
+  ],
+  "local_tests": {
+    "root_python": 49,
+    "network_python": 34,
+    "panel_python": 73,
+    "runtime_python": 124,
+    "runtime_native_followup_suite": 3,
+    "authority_stop_groups": 7,
+    "command_guard": "passed",
+    "root_psdk_bridge_stubs": "passed"
+  },
+  "runtime_note": "One native case initially skipped without library, then its complete three-test suite passed against a locally compiled current core. No remaining skipped case.",
+  "prior_device_tests": {
+    "panel_python": 53,
+    "runtime_python": 124,
+    "native_control_camera_prediction": "passed",
+    "arm64_binary_sha256": "11c9528217dd097345503bf049de7d6a3999f2f97110d8c92e5816017a1c3d09"
+  },
+  "visual_confirmation": {
+    "settings_controls": 10,
+    "maintenance_switch_on": true
+  },
+  "not_verified": [
+    "physical_on_off_roundtrip",
+    "real_camera_sampling",
+    "real_flight",
+    "valid_physical_time_calibration",
+    "kalman_flight_benefit"
+  ],
+  "sync_changed_device": false,
+  "credentials_included": false
+}

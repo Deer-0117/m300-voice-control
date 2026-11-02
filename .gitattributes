@@ -1,2 +1,5 @@
 # Preserve device Widget JSON byte-for-byte, including its CRLF line endings.
 onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/balloon_widget/widget_file/*/widget_config.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Preserve the two current device service snapshots exactly (CRLF).
+onboard/code10/recognition/systemd/balloon-yolo-worker.service -text whitespace=cr-at-eol
+onboard/code10/recognition/systemd/balloon-liveview-decoder.service -text whitespace=cr-at-eol

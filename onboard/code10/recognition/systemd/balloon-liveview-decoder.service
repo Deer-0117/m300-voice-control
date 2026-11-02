@@ -1,0 +1,21 @@
+[Unit]
+Description=Low-latency DJI Liveview decoder for balloon detection
+After=local-fs.target
+Before=psdk-balloon.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/uav/offline_balloon_strike_test
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/bin/rm -f /dev/shm/balloon_liveview_latest.tsv
+ExecStart=/usr/bin/python3 /home/uav/offline_balloon_strike_test/balloon_liveview_decoder.py --decoder software --publish-fps 12 --jpeg-quality 90 --retain-frames 48
+Restart=always
+RestartSec=1
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

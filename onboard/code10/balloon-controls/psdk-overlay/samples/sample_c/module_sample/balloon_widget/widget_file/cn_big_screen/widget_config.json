@@ -8,14 +8,14 @@
       "is_enable": true
     },
     "speaker": {
-      "is_enable_tts": true,
+      "is_enable_tts": false,
       "is_enable_voice": true
     },
     "widget_list": [
       {
-        "widget_index": 18,
+        "widget_index": 50,
         "widget_type": "button",
-        "widget_name": "开始任意气球撞击",
+        "widget_name": "开始测试",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -25,9 +25,9 @@
         }
       },
       {
-        "widget_index": 19,
+        "widget_index": 51,
         "widget_type": "button",
-        "widget_name": "开始粉黄顺序撞击",
+        "widget_name": "API联网",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -37,9 +37,9 @@
         }
       },
       {
-        "widget_index": 20,
+        "widget_index": 55,
         "widget_type": "button",
-        "widget_name": "执行语音任务",
+        "widget_name": "执行API语音任务",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -49,9 +49,9 @@
         }
       },
       {
-        "widget_index": 21,
+        "widget_index": 56,
         "widget_type": "button",
-        "widget_name": "停止全部测试",
+        "widget_name": "新增API语音任务",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -61,21 +61,21 @@
         }
       },
       {
-        "widget_index": 22,
-        "widget_type": "switch",
-        "widget_name": "测试时录像",
+        "widget_index": 57,
+        "widget_type": "button",
+        "widget_name": "清除候选语音任务",
         "icon_file_set": {
-          "icon_file_name_selected": "icon_switch_select.png",
-          "icon_file_name_unselected": "icon_switch_unselect.png"
+          "icon_file_name_selected": "icon_button2.png",
+          "icon_file_name_unselected": "icon_button2.png"
         },
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 23,
+        "widget_index": 58,
         "widget_type": "button",
-        "widget_name": "跳过当前目标，继续下一目标",
+        "widget_name": "停止测试",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -89,73 +89,81 @@
   "config_interface": {
     "widget_list": [
       {
-        "widget_index": 24,
-        "widget_type": "button",
-        "widget_name": "检查网络连接",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
+        "widget_index": 69,
+        "widget_type": "switch",
+        "widget_name": "仅显示/维护",
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 26,
+        "widget_index": 60,
+        "widget_type": "button",
+        "widget_name": "开始测试",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 61,
         "widget_type": "button",
         "widget_name": "API联网",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 27,
+        "widget_index": 52,
         "widget_type": "button",
-        "widget_name": "语音识别测试",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
+        "widget_name": "相机/姿态采样",
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 28,
+        "widget_index": 53,
         "widget_type": "button",
-        "widget_name": "画面识别测试",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
+        "widget_name": "部署/标定核验",
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 29,
-        "widget_type": "button",
-        "widget_name": "任务意图测试",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
+        "widget_index": 54,
+        "widget_type": "switch",
+        "widget_name": "Kalman预测模式",
         "customize_rc_buttons_config": {
           "is_enable": false
         }
       },
       {
-        "widget_index": 25,
+        "widget_index": 65,
         "widget_type": "button",
-        "widget_name": "清除待执行语音任务",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
+        "widget_name": "执行API语音任务",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 66,
+        "widget_type": "button",
+        "widget_name": "新增API语音任务",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 67,
+        "widget_type": "button",
+        "widget_name": "清除候选语音任务",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 68,
+        "widget_type": "button",
+        "widget_name": "停止测试",
         "customize_rc_buttons_config": {
           "is_enable": false
         }
