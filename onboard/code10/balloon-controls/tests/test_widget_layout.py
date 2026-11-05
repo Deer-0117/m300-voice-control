@@ -18,6 +18,10 @@ class WidgetLayoutTests(unittest.TestCase):
             self.assertEqual([item['widget_index'] for item in main],[50,51,55,56,57,58])
             self.assertEqual([item['widget_index'] for item in settings],[69,60,61,52,53,54,65,66,67,68])
             entries=main+settings
+            by_id={item['widget_index']:item for item in entries}
+            voice_input_name='语音输入任务' if language=='cn' else 'Voice task input'
+            self.assertEqual(by_id[50]['widget_name'],voice_input_name)
+            self.assertEqual(by_id[60]['widget_name'],voice_input_name)
             schema=[(item['widget_index'],item['widget_type']) for item in entries]
             self.assertEqual(len(schema),16);self.assertEqual(dict(schema),registered)
             schemas.append(schema)

@@ -1,0 +1,28 @@
+{
+  "_comment": "Scene-specific pale yellow/green small-balloon settings for liveview.avi (2026-10-30). Tuned to reduce background candidates; not an all-color or general-purpose detector. Misses and false positives remain possible.",
+  "hsv_lower": [
+    28,
+    12,
+    110
+  ],
+  "hsv_upper": [
+    55,
+    65,
+    255
+  ],
+  "min_area_px": 56,
+  "max_area_ratio": 1.0,
+  "min_aspect_ratio": 0.65,
+  "max_aspect_ratio": 1.4,
+  "min_fill_ratio": 0.6,
+  "max_fill_ratio": 0.88,
+  "min_solidity": 0.9,
+  "min_circularity": 0.65,
+  "max_rectangularity": 0.88,
+  "rectangle_min_area_px": 32,
+  "open_kernel": 3,
+  "close_kernel": 5,
+  "min_confidence": 0.98,
+  "max_components": 256,
+  "max_candidates": 32
+}

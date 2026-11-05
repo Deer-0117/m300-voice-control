@@ -26,8 +26,10 @@ typedef enum {
 /*
  * Call after the DJI scheduler and the flight-control/data-subscription
  * modules are ready. When BALLOON_GIMBAL_TRACKING is enabled (the default),
- * initialization also starts the DJI gimbal manager, resets the gimbal, and
- * subscribes gimbal angles. BALLOON_GIMBAL_STATIC_TEST=1 keeps the gimbal
+ * initialization also starts the DJI gimbal manager and subscribes gimbal
+ * angles. Managed panel tasks preserve the current pose and gimbal mode,
+ * wait for a fresh visible target, and never reset or search automatically.
+ * Legacy callers reset at startup. BALLOON_GIMBAL_STATIC_TEST=1 keeps the gimbal
  * centered after startup reset. BALLOON_GIMBAL_SEARCH=0 enables tracking
  * without idle search motion, so the camera waits centered for a fresh target.
  * Stop/takeover does not reset pitch/yaw. The task does not take off; it only takes joystick
@@ -42,7 +44,9 @@ T_DjiReturnCode DjiTargetChase_DeInit(void);
  * every worker to exit. Live/initialized or unreleased controllers reject
  * the change without changing the prior mode. A panel calls this with true
  * at every startup. Maintenance blocks Init entirely; false permits a later
- * explicit task to use flight control and gimbal tracking. Before the first
+ * explicit task to use flight control and visible-target-only gimbal tracking
+ * (no reset, idle search, or near-edge recovery, regardless of environment).
+ * Before the first
  * call, the two Requested getters preserve the legacy environment behavior. */
 T_DjiReturnCode DjiTargetChase_SetPanelMaintenance(bool enabled);
 bool DjiTargetChase_RequestedNoFlight(void);
@@ -105,6 +109,8 @@ T_DjiReturnCode DjiTargetChase_SearchTick(uint64_t now_ms);
 /*
  * Drop the previous target and immediately restart the cyclic gimbal/body
  * search. Used for deterministic transitions between ordered strike stages.
+ * Managed panel tasks instead stop gimbal motion and wait for the next
+ * visible target in the current camera view; they do not initiate a scan.
  */
 T_DjiReturnCode DjiTargetChase_RequestSearch(uint64_t now_ms,
                                              bool fast_pass);
@@ -134,6 +140,8 @@ T_DjiReturnCode DjiTargetChase_Abort(void);
  * Pending release must block a new mission; retry DeInit to retry release.
  * The last result includes failed zero commands even if release succeeded. */
 bool DjiTargetChase_IsControlInhibited(void);
+/* Synchronous stop latch only; no SDK calls or controller teardown. */
+void DjiTargetChase_RequestStop(void);
 bool DjiTargetChase_IsReleasePending(void);
 T_DjiReturnCode DjiTargetChase_GetLastStopResult(void);
 

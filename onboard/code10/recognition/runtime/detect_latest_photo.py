@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run YOLO on one PSDK-triggered photo and append a compact JSONL record."""
+"""Run the configured detector on one photo and append a compact JSONL record."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import time
 from balloon_clock import now_ms, clock_id, log_clock, split_record, frame_timestamp
 from pathlib import Path
 from typing import Any
+from detector_selector import load_detector, detector_metadata
 
 
 ROOT = Path(__file__).resolve().parent
@@ -22,8 +23,7 @@ TARGET_CHASE_CLI = ROOT / "target_chase" / "target_chase_plan_cli"
 CONTROL_EVENT_LOG = ROOT / "control_events.jsonl"
 LATEST_TARGET_FILE = ROOT / "latest_target.tsv"
 
-if YOLO_ENV_PYTHON.exists() and Path(sys.executable) != YOLO_ENV_PYTHON:
-    os.execv(str(YOLO_ENV_PYTHON), [str(YOLO_ENV_PYTHON), *sys.argv])
+# Interpreter selection belongs to the caller, never to module import.
 
 
 
@@ -239,21 +239,10 @@ def main() -> int:
             raise FileNotFoundError(f"source not found: {source}")
 
         detect_source, enhancement_info = prepare_detection_image(source)
-        sys.path.insert(0, str(YOLO_MODULE))
-        import yolo_infer
-
-        config = yolo_infer.load_config()
+        detector, config, _weights = load_detector()
         width, height = image_size(detect_source)
-        result = yolo_infer.run_detection(
-            source=detect_source,
-            weights=config["weights"].resolve(),
-            imgsz=config["imgsz"],
-            conf=config["conf"],
-            device=config["device"],
-            save=config["save"],
-            project=YOLO_MODULE / "runs",
-            name="latest_photo",
-        )
+        result = {**detector_metadata(detector, config),
+                  "detections": detector.predict_records(detect_source)}
         detections = [enrich_detection(item, width, height) for item in result.get("detections", [])]
         label = args.target_label.lower()
         candidates = [item for item in detections if label in str(item.get("class_name", "")).lower()]
@@ -305,4 +294,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from detector_selector import ensure_script_interpreter
+    ensure_script_interpreter()
     raise SystemExit(main())

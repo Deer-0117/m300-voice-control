@@ -43,7 +43,7 @@
 #include "widget/test_widget_speaker.h"
 
 /* New IDs prevent a cached old Prepare button from starting flight. */
-#define BALLOON_WIDGET_ANY_INDEX 50
+#define BALLOON_WIDGET_VOICE_INPUT_INDEX 50
 #define BALLOON_WIDGET_PINK_YELLOW_INDEX 19
 #define BALLOON_WIDGET_VOICE_CONFIRM_INDEX 55
 #define BALLOON_WIDGET_STOP_INDEX 58
@@ -59,7 +59,7 @@
 #define BALLOON_WIDGET_AUDIT_INDEX 53
 #define BALLOON_WIDGET_KALMAN_INDEX 54
 #define BALLOON_WIDGET_NEW_API_INDEX 56
-#define BALLOON_WIDGET_CONFIG_ANY_INDEX 60
+#define BALLOON_WIDGET_CONFIG_VOICE_INPUT_INDEX 60
 #define BALLOON_WIDGET_CONFIG_API_NETWORK_INDEX 61
 #define BALLOON_WIDGET_CONFIG_VOICE_CONFIRM_INDEX 65
 #define BALLOON_WIDGET_CONFIG_NEW_API_INDEX 66
@@ -127,6 +127,24 @@ static pid_t s_voicePid = 0, s_missionPid = 0, s_panelPid = 0;
 static char s_voiceSession[96] = {0};
 static unsigned int s_voiceSequence = 0;
 static uint64_t s_sampleConfirmUntil = 0;
+/* The watcher and button callback use these only under s_actionMutex. A new
+ * input button snapshots the old PCM before prompting, so a fast new recording
+ * cannot be consumed by a later asynchronous resync. */
+static time_t s_voiceLastSeconds = 0;
+static long s_voiceLastNanoseconds = 0;
+static off_t s_voiceLastSize = 0;
+static int s_voiceStableCount = 0;
+
+static void BalloonWidget_ResetVoiceBaseline(void)
+{
+    struct stat current;
+    bool exists = stat(BALLOON_VOICE_PCM_DEFAULT, &current) == 0 && current.st_size > 0;
+    s_voiceLastSeconds = exists ? current.st_mtim.tv_sec : 0;
+    s_voiceLastNanoseconds = exists ? current.st_mtim.tv_nsec : 0;
+    s_voiceLastSize = exists ? current.st_size : 0;
+    s_voiceStableCount = 0;
+    s_apiVoiceResync = false;
+}
 
 static bool BalloonWidget_HelperBusy(void)
 {
@@ -170,7 +188,7 @@ static void BalloonWidget_ResetButtonValues(void)
 }
 
 static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
-    {BALLOON_WIDGET_ANY_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
+    {BALLOON_WIDGET_VOICE_INPUT_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_API_NETWORK_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_SAMPLE_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_AUDIT_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
@@ -179,7 +197,7 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
     {BALLOON_WIDGET_NEW_API_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_VOICE_CANCEL_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_STOP_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
-    {BALLOON_WIDGET_CONFIG_ANY_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
+    {BALLOON_WIDGET_CONFIG_VOICE_INPUT_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_CONFIG_API_NETWORK_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_CONFIG_VOICE_CONFIRM_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
     {BALLOON_WIDGET_CONFIG_NEW_API_INDEX, DJI_WIDGET_TYPE_BUTTON, BalloonWidget_SetValue, BalloonWidget_GetValue, NULL},
@@ -192,7 +210,7 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
 static uint32_t BalloonWidget_ActionIndex(uint32_t index)
 {
     switch (index) {
-        case BALLOON_WIDGET_CONFIG_ANY_INDEX: return BALLOON_WIDGET_ANY_INDEX;
+        case BALLOON_WIDGET_CONFIG_VOICE_INPUT_INDEX: return BALLOON_WIDGET_VOICE_INPUT_INDEX;
         case BALLOON_WIDGET_CONFIG_API_NETWORK_INDEX: return BALLOON_WIDGET_API_NETWORK_INDEX;
         case BALLOON_WIDGET_CONFIG_VOICE_CONFIRM_INDEX: return BALLOON_WIDGET_VOICE_CONFIRM_INDEX;
         case BALLOON_WIDGET_CONFIG_NEW_API_INDEX: return BALLOON_WIDGET_NEW_API_INDEX;
@@ -899,26 +917,66 @@ static void BalloonWidget_TimingStep(void)
     pthread_mutex_unlock(&s_actionMutex);
 }
 
-static void *BalloonWidget_VoiceWatchTask(void *arg)
+static void BalloonWidget_ShowStoppedNotice(void)
+{
+    char visualMessage[256];
+    const T_DjiReturnCode initResult = BalloonPhotoDetector_GetControlInitResult();
+    if (DjiTargetChase_IsReleasePending()) {
+        BalloonWidget_ShowMessage("停止未完成：控制权释放失败。请用遥控器原生操作接管，再按停止测试重试");
+    } else if (initResult != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        char message[256];
+        snprintf(message, sizeof(message), "飞控初始化失败（0x%llX），任务未执行；请查看飞控日志",
+                 (unsigned long long) initResult);
+        BalloonWidget_ShowMessage(message);
+    } else if (BalloonPhotoDetector_GetVisualFailure(visualMessage, sizeof(visualMessage))) {
+        BalloonWidget_ShowMessage(visualMessage);
+    } else if (DjiTargetChase_GetLastStopResult() != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        BalloonWidget_ShowMessage("任务已结束；停止过程有错误，请查看日志并核实飞机状态");
+    } else {
+        BalloonWidget_ShowMessage("任务已结束，控制线程已退出；录像正在完成保存。可选择新任务");
+    }
+}
+
+/* Called only with s_actionMutex held; records observed while busy are
+ * consumed and never queued for a later mission. */
+static void BalloonWidget_PollVoicePcm(bool consume)
 {
     struct stat current;
-    time_t lastSeconds = 0;
-    long lastNanoseconds = 0;
-    off_t lastSize = 0;
-    int stableCount = 0;
+    if (stat(BALLOON_VOICE_PCM_DEFAULT, &current) != 0 || current.st_size <= 0) {
+        s_voiceStableCount = 0;
+        s_apiVoiceResync = false;
+        return;
+    }
+    if (consume) {
+        s_voiceLastSeconds = current.st_mtim.tv_sec;
+        s_voiceLastNanoseconds = current.st_mtim.tv_nsec;
+        s_voiceLastSize = current.st_size;
+        s_voiceStableCount = 0;
+        s_apiVoiceResync = false;
+    } else if (current.st_mtim.tv_sec == s_voiceLastSeconds &&
+               current.st_mtim.tv_nsec == s_voiceLastNanoseconds && current.st_size == s_voiceLastSize) {
+        if (s_voiceStableCount > 0 && ++s_voiceStableCount >= 4) {
+            s_voiceStableCount = 0;
+            (void)BalloonWidget_StartVoiceTask(BALLOON_VOICE_RECOGNIZE, BALLOON_VOICE_PCM_DEFAULT);
+        }
+    } else {
+        s_voiceLastSeconds = current.st_mtim.tv_sec;
+        s_voiceLastNanoseconds = current.st_mtim.tv_nsec;
+        s_voiceLastSize = current.st_size;
+        s_voiceStableCount = 1;
+    }
+}
+
+static void *BalloonWidget_VoiceWatchTask(void *arg)
+{
     (void)arg;
-    s_apiVoiceResync = true;
     while (1) {
         usleep(100000);
         BalloonWidget_TimingStep();
         pthread_mutex_lock(&s_actionMutex);
         if (BalloonPhotoDetector_IsRunning()) s_stopNoticePending = true;
         if (s_stopNoticePending && !BalloonPhotoDetector_IsRunning() && !BalloonWidget_HelperBusy()) {
-            if (DjiTargetChase_IsReleasePending())
-                BalloonWidget_ShowMessage("停止未完成：控制权释放失败。请用遥控器原生操作接管，再按停止测试重试");
-            else if (DjiTargetChase_GetLastStopResult() != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-                BalloonWidget_ShowMessage("任务已结束；停止过程有错误，请查看日志并核实飞机状态");
-            else BalloonWidget_ShowMessage("任务已结束，控制线程已退出；录像正在完成保存。可选择新任务");
+            BalloonWidget_ShowStoppedNotice();
             s_stopNoticePending = false;
         }
         if (s_newVoicePromptPending && BalloonPanel_Idle() && !DjiTargetChase_IsReleasePending()) {
@@ -929,30 +987,7 @@ static void *BalloonWidget_VoiceWatchTask(void *arg)
         bool consume = s_apiVoiceResync || BalloonWidget_HelperBusy() ||
                        BalloonPhotoDetector_IsRunning() || BalloonTiming_Requested() ||
                        s_timingReserved || s_newVoicePromptPending;
-        if (stat(BALLOON_VOICE_PCM_DEFAULT, &current) != 0 || current.st_size <= 0) {
-            stableCount = 0;
-            s_apiVoiceResync = false;
-            pthread_mutex_unlock(&s_actionMutex);
-            continue;
-        }
-        if (consume) {
-            lastSeconds = current.st_mtim.tv_sec;
-            lastNanoseconds = current.st_mtim.tv_nsec;
-            lastSize = current.st_size;
-            stableCount = 0;
-            s_apiVoiceResync = false;
-        } else if (current.st_mtim.tv_sec == lastSeconds &&
-                   current.st_mtim.tv_nsec == lastNanoseconds && current.st_size == lastSize) {
-            if (stableCount > 0 && ++stableCount >= 4) {
-                stableCount = 0;
-                (void)BalloonWidget_StartVoiceTask(BALLOON_VOICE_RECOGNIZE, BALLOON_VOICE_PCM_DEFAULT);
-            }
-        } else {
-            lastSeconds = current.st_mtim.tv_sec;
-            lastNanoseconds = current.st_mtim.tv_nsec;
-            lastSize = current.st_size;
-            stableCount = 1;
-        }
+        BalloonWidget_PollVoicePcm(consume);
         pthread_mutex_unlock(&s_actionMutex);
     }
     return NULL;
@@ -963,6 +998,12 @@ static T_DjiReturnCode BalloonWidget_StartVoiceWatch(void)
     pthread_t thread;
     pthread_attr_t attributes;
     int result;
+
+    /* Set startup resync before launching the watcher. A delayed thread must
+     * not override a voice-input button's newer synchronous PCM baseline. */
+    pthread_mutex_lock(&s_actionMutex);
+    s_apiVoiceResync = true;
+    pthread_mutex_unlock(&s_actionMutex);
 
     if (pthread_attr_init(&attributes) != 0) {
         return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
@@ -1182,7 +1223,7 @@ static void *BalloonWidget_MissionTask(void *arg)
     if (result != 0 || !BalloonPhotoDetector_IsRunning() || BalloonPhotoDetector_IsStopping() ||
         !BalloonMission_Healthy(task->token) ||
         !BalloonWidget_WritePlain(BALLOON_MISSION_COMMIT, task->token)) goto failed;
-    BalloonWidget_ShowMessage("任务已放行：正在搜索/追击；停止请按停止测试");
+    BalloonWidget_ShowMessage("计划已放行，正在启动飞控；停止请按停止测试");
     goto done;
 failed:
     result = -1;
@@ -1209,7 +1250,7 @@ cancelled:
 done:
     s_missionBusy = false;
     uint32_t button = strcmp(task->mode, "voice") == 0 ? BALLOON_WIDGET_VOICE_CONFIRM_INDEX :
-                      strcmp(task->mode, "api_new") == 0 ? BALLOON_WIDGET_NEW_API_INDEX : BALLOON_WIDGET_ANY_INDEX;
+                      strcmp(task->mode, "api_new") == 0 ? BALLOON_WIDGET_NEW_API_INDEX : BALLOON_WIDGET_VOICE_INPUT_INDEX;
     BalloonWidget_LogButton(button, 1, "async_complete",
                            result == 0 ? DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS : DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN);
     pthread_mutex_unlock(&s_actionMutex);
@@ -1228,13 +1269,13 @@ static T_DjiReturnCode BalloonWidget_BeginMission(const char *mode)
         return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
     }
     bool voice = strcmp(mode, "voice") == 0 || strcmp(mode, "api_new") == 0;
+    if (!voice) {
+        BalloonWidget_ShowMessage("请先点击语音输入任务；录音生成API候选后再确认执行");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    }
     if (voice && (!BalloonPanel_VoiceReady() ||
         (strcmp(mode, "voice") == 0 && s_newVoicePending))) {
         BalloonWidget_ShowMessage(s_newVoicePending ? "新录音请点击新增API语音任务执行" : "没有本次录入的有效API候选，请先重新录音");
-        return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
-    }
-    if (!voice && s_newVoicePending) {
-        BalloonWidget_ShowMessage("新增语音录入中；请先清除候选语音任务再开始测试");
         return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
     }
     if (BalloonTiming_Requested() || s_timingReserved) {
@@ -1371,7 +1412,7 @@ static T_DjiReturnCode BalloonWidget_SetMaintenance(bool maintenance)
     BalloonWidget_ResetButtonValues();
     BalloonWidget_ShowMessage(maintenance ?
         "仅显示/维护已开启：飞行任务和相机采样禁用；候选任务已清除" :
-        "实机测试待命：切换未启动任务；请重新选择开始测试或录入API语音任务");
+        "实机测试待命：切换未启动任务；请点击语音输入任务，录音后确认执行API语音任务");
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
@@ -1411,7 +1452,7 @@ static T_DjiReturnCode BalloonWidget_SetValue(E_DjiWidgetType widgetType, uint32
     }
     if (value != DJI_WIDGET_BUTTON_STATE_PRESS_DOWN) { code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS; goto out; }
     switch (index) {
-        case BALLOON_WIDGET_ANY_INDEX: code = BalloonWidget_BeginMission("any"); break;
+        case BALLOON_WIDGET_VOICE_INPUT_INDEX: code = BalloonPanel_BeginVoiceInput(); break;
         case BALLOON_WIDGET_API_NETWORK_INDEX: code = BalloonWidget_StartApiNetwork(); break;
         case BALLOON_WIDGET_SAMPLE_INDEX: code = BalloonPanel_StartTool(PANEL_SAMPLE); break;
         case BALLOON_WIDGET_AUDIT_INDEX: code = BalloonPanel_StartTool(PANEL_AUDIT); break;
@@ -1445,7 +1486,7 @@ static T_DjiReturnCode BalloonWidget_GetValue(E_DjiWidgetType widgetType, uint32
     (void) widgetType;
     (void) userData;
     index = BalloonWidget_ActionIndex(index);
-    if (value == NULL || ((index < BALLOON_WIDGET_ANY_INDEX || index > BALLOON_WIDGET_STOP_INDEX) &&
+    if (value == NULL || ((index < BALLOON_WIDGET_VOICE_INPUT_INDEX || index > BALLOON_WIDGET_STOP_INDEX) &&
         index != BALLOON_WIDGET_MAINTENANCE_INDEX) ||
         widgetType != ((index == BALLOON_WIDGET_KALMAN_INDEX || index == BALLOON_WIDGET_MAINTENANCE_INDEX) ?
                        DJI_WIDGET_TYPE_SWITCH : DJI_WIDGET_TYPE_BUTTON)) {

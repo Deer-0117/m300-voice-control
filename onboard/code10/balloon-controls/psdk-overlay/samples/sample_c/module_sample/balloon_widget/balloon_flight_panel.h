@@ -11,6 +11,7 @@
 static T_DjiReturnCode BalloonWidget_BeginMission(const char *mode);
 static T_DjiReturnCode BalloonWidget_Stop(void);
 static bool BalloonWidget_WritePlain(const char *path, const char *text);
+static void BalloonWidget_CloseMissionGate(void);
 
 /* Fork registration, nonblocking reap and Stop share the action mutex. Never
  * leave a reaped PID registered: cancellation must not signal a reused PID. */
@@ -93,6 +94,37 @@ static bool BalloonPanel_Idle(void)
 {
     return !BalloonPhotoDetector_IsRunning() && !BalloonPhotoDetector_IsStopping() &&
            !BalloonWidget_HelperBusy() && !BalloonTiming_Requested() && !s_timingReserved;
+}
+
+/* Called with the action mutex held. This entry only creates a fresh recording
+ * session; the watcher produces an API candidate, and button 55/65 must confirm
+ * it later. It never creates a mission, starts a camera or requests authority. */
+static T_DjiReturnCode BalloonPanel_BeginVoiceInput(void)
+{
+    if (s_displayOnly) {
+        BalloonWidget_ShowMessage("请先关闭仅显示/维护，再点击语音输入任务");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    }
+    if (!BalloonPanel_Idle() || DjiTargetChase_IsReleasePending() || s_isArmed ||
+        s_stopNoticePending || s_apiTestCleanupFailed || s_timingOwnLiveview ||
+        s_timingOwnSubscription || s_voicePid || s_missionPid || s_panelPid || s_apiTestPid) {
+        BalloonWidget_ShowMessage("请先停止当前任务并等待结束，再点击语音输入任务");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
+    }
+    ++s_actionEpoch;
+    s_sampleConfirmUntil = 0;
+    s_newVoicePending = false;
+    s_newVoicePromptPending = false;
+    BalloonWidget_CloseMissionGate();
+    if (!BalloonPanel_NewVoiceSession()) {
+        BalloonPanel_ClearVoice();
+        s_apiVoiceResync = true;
+        BalloonWidget_ShowMessage("语音输入会话创建失败，请重新点击；任务未启动");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    }
+    BalloonWidget_ResetVoiceBaseline();
+    BalloonWidget_ShowMessage("请按遥控器语音键输入指令；等待API候选计划后，点击执行API语音任务。当前任务未启动");
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 typedef struct { unsigned int epoch; int kind; } T_BalloonPanelTask;

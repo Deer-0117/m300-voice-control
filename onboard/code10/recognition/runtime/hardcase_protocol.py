@@ -373,7 +373,9 @@ class WorkerProducer(Producer):
         # Hash model files and configuration exactly once, never on a request path.
         self.config=_safe_raw(config)
         self.config_hash=hashlib.sha256(p.dumps(self.config,p.MAX_METADATA_BYTES)).hexdigest()
-        paths={'pytorch':config.get('weights')}
+        paths={'pytorch':config['weights']} if config.get('weights') is not None else {}
+        if config.get('active_detector') == 'pixel':
+            self.model_reasons['color_threshold']='not applicable: pixel detector has no model weights'
         primary=getattr(detector,'primary',detector)
         if getattr(primary,'engine_path',None): paths['tensorrt']=primary.engine_path
         for backend,path in paths.items():
@@ -383,7 +385,7 @@ class WorkerProducer(Producer):
                     for block in iter(lambda:stream.read(1024*1024),b''): digest.update(block)
                 self.model_hashes[backend]=digest.hexdigest()
             except (OSError,TypeError): self.model_reasons[backend]='model file unavailable at initialization'
-        names=getattr(getattr(detector,'model',None),'names',{}) or {}
+        names=getattr(detector,'class_names',None) or getattr(getattr(detector,'model',None),'names',{}) or {}
         if isinstance(names,list): names=dict(enumerate(names))
         self.class_map={str(k):str(v) for k,v in names.items()}
         if not self.class_map and 'tensorrt' in paths: self.class_map={'0':'balloon'}
@@ -439,6 +441,8 @@ class RequestCapture:
             producer=self.producer
             backend=getattr(detector,'backend_name','unknown')
             model_backend='pytorch' if backend.startswith('pytorch') else backend
+            box_stage='post_pixel_filter' if model_backend=='color_threshold' else 'post_model_nms'
+            result_stage='post_pixel_filter' if model_backend=='color_threshold' else 'post_tile_merge'
             model_hash=producer.model_hashes.get(model_backend)
             reasons={}
             if model_hash is None: reasons['model_sha256']=producer.model_reasons.get(model_backend,'backend artifact unavailable at initialization')
@@ -460,11 +464,11 @@ class RequestCapture:
                 request_start_ns=self.request_start_ns,inference_start_ns=self.inference_start_ns,
                 inference_end_ns=self.inference_end_ns or time.monotonic_ns(),backend=backend,model_sha256=model_hash,
                 config_sha256=producer.config_hash,online_conf=conf,online_iou=iou,class_map=producer.class_map,
-                detections=normalize_boxes(business.get('detections',[]),self.width,self.height,'full','post_tile_merge'),
-                full_detections=normalize_boxes(self.full,self.width,self.height,'full','post_model_nms'),
-                tile_detections=normalize_boxes(self.tiles,self.width,self.height,'tile','post_model_nms'),
+                detections=normalize_boxes(business.get('detections',[]),self.width,self.height,'full',result_stage),
+                full_detections=normalize_boxes(self.full,self.width,self.height,'full',box_stage),
+                tile_detections=normalize_boxes(self.tiles,self.width,self.height,'tile',box_stage),
                 selected_target=normalize_boxes([business['best_balloon']],self.width,self.height,'full','selection')[0] if business.get('best_balloon') else None,
-                detection_stage='post_tile_merge',timings={k:business.get(k) for k in ('latency_ms','far_tile_latency_ms','wrapper_latency_ms')},
+                detection_stage=result_stage,timings={k:business.get(k) for k in ('latency_ms','far_tile_latency_ms','wrapper_latency_ms')},
                 capture_ts_ms=business.get('capture_ts_ms'),request_ts_ms=business.get('request_ts_ms'),
                 raw_result=_safe_raw(raw),unavailable_reasons=reasons,passes=_safe_raw(self.passes),
                 model_info={'hashes':producer.model_hashes,'configuration':producer.config})

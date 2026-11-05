@@ -1,0 +1,4 @@
+{
+  "active_detector": "yolo",
+  "pixel_config": "pixel_callable_module/config.json"
+}

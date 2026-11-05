@@ -148,6 +148,39 @@ typedef struct { uint32_t index; E_DjiWidgetType type;
 } T_DjiWidgetHandlerListItem;
 '''
 
+VOICE_ENTRY_PRELUDE = r'''
+#include <sys/stat.h>
+#ifdef __APPLE__
+#define st_mtim st_mtimespec
+#endif
+#define BALLOON_VOICE_PCM_DEFAULT "voice.pcm"
+static unsigned int s_voiceSequence;
+static time_t s_voiceLastSeconds;
+static long s_voiceLastNanoseconds;
+static off_t s_voiceLastSize;
+static int s_voiceStableCount, voice_start_calls;
+static bool clock_fail, pcm_exists = true;
+static struct stat pcm_stat;
+static bool BalloonClock_Id(char *id) {
+    if(clock_fail) return false;
+    strcpy(id,"mono-v1:11111111-1111-4111-8111-111111111111"); return true;
+}
+static bool BalloonWidget_WritePlain(const char *path,const char *text) {
+    FILE *f=fopen(path,"w"); if(!f)return false;
+    bool ok=fprintf(f,"%s\n",text)>0; return fclose(f)==0 && ok;
+}
+static int fake_stat(const char *path,struct stat *data) {
+    assert(!strcmp(path,BALLOON_VOICE_PCM_DEFAULT));
+    if(!pcm_exists)return -1; *data=pcm_stat; return 0;
+}
+#define stat(path,data) fake_stat((path),(data))
+#define BALLOON_VOICE_RECOGNIZE 0
+static T_DjiReturnCode BalloonWidget_StartVoiceTask(int action,const char *path) {
+    assert(action==BALLOON_VOICE_RECOGNIZE && !strcmp(path,BALLOON_VOICE_PCM_DEFAULT));
+    assert(!s_newVoicePending); voice_start_calls++; return 0;
+}
+'''
+
 EPILOGUE = r'''
 static void reset(void) {
     s_voiceCommandRunning=s_missionBusy=s_apiNetworkRunning=s_apiTestRunning=false;
@@ -164,6 +197,11 @@ static void reset(void) {
     kill_calls=cleared_gate=reset_calls=voice_clears=exposure_calls=startup_fail_stage=0;
     maintenance_calls=maintenance_result=env_failures=0; controller_maintenance=false;
     last_message[0]=last_mode[0]=0;
+    clock_fail=false; pcm_exists=true; memset(&pcm_stat,0,sizeof(pcm_stat));
+    pcm_stat.st_mtim.tv_sec=10; pcm_stat.st_size=128;
+    s_voiceLastSeconds=0; s_voiceLastNanoseconds=0; s_voiceLastSize=0;
+    s_voiceStableCount=voice_start_calls=0;
+    unlink(API_VOICE_SESSION); unlink(API_VOICE_READY); unlink(API_VOICE_CANDIDATE);
     assert(!queued_arg); queued_function=NULL;
     setenv("BALLOON_PREDICTION_MODE","1",1);
     unsetenv("BALLOON_PANEL_DISPLAY_ONLY");
@@ -195,13 +233,13 @@ static void test_registration_and_dispatch(void) {
     assert(!mission_calls && !thread_calls && !stop_calls);
     assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,50,0,NULL)==0);
     assert(!mission_calls);
-    button(50); assert(mission_calls==1 && !strcmp(last_mode,"any"));
+    button(50); assert(!mission_calls && s_voiceSession[0] && voice_clears==1 && cleared_gate==1);
     button(51); assert(network_calls==1);
-    button(55); assert(mission_calls==2 && !strcmp(last_mode,"voice"));
+    button(55); assert(mission_calls==1 && !strcmp(last_mode,"voice"));
     button(56); assert(new_api_calls==1);
-    button(57); assert(voice_clears==1);
+    button(57); assert(voice_clears==2);
     button(58); assert(stop_calls==1);
-    reset(); button(60); assert(mission_calls==1 && !strcmp(last_mode,"any"));
+    reset(); button(60); assert(!mission_calls && s_voiceSession[0] && voice_clears==1 && cleared_gate==1);
     reset(); button(61); assert(network_calls==1 && !mission_calls);
     reset(); button(65); assert(mission_calls==1 && !strcmp(last_mode,"voice"));
     reset(); button(66); assert(new_api_calls==1 && !mission_calls);
@@ -216,6 +254,61 @@ static void test_registration_and_dispatch(void) {
     int32_t value=123;
     assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_BUTTON,60,&value,NULL)==0 && value==0);
     assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_SWITCH,60,1,NULL)==3);
+}
+static void test_voice_input_new_session_never_starts_a_mission(void) {
+    strcpy(s_voiceSession,"old-session");
+    assert(BalloonWidget_WritePlain(API_VOICE_SESSION,"old-session"));
+    assert(BalloonWidget_WritePlain(API_VOICE_READY,"old-session"));
+    assert(BalloonWidget_WritePlain(API_VOICE_CANDIDATE,"stale candidate"));
+    s_newVoicePending=true; s_newVoicePromptPending=true; s_sampleConfirmUntil=9999;
+    unsigned old=s_actionEpoch;
+    button(50);
+    assert(s_actionEpoch==old+1 && strcmp(s_voiceSession,"old-session"));
+    assert(access(API_VOICE_READY,F_OK)!=0 && access(API_VOICE_CANDIDATE,F_OK)!=0);
+    assert(access(API_VOICE_SESSION,F_OK)==0 && !s_newVoicePending && !s_newVoicePromptPending);
+    assert(!s_apiVoiceResync && !s_sampleConfirmUntil && !s_isArmed);
+    assert(!mission_calls && !thread_calls && !child_calls && !stop_calls && !kill_calls);
+    assert(strstr(last_message,"语音键") && strstr(last_message,"执行API语音任务") && strstr(last_message,"未启动"));
+    for(unsigned i=0;i<8;i++)BalloonWidget_PollVoicePcm(false);
+    assert(!voice_start_calls); /* The PCM that predates the click is consumed. */
+    pcm_stat.st_mtim.tv_nsec=1; pcm_stat.st_size++;
+    for(unsigned i=0;i<4;i++)BalloonWidget_PollVoicePcm(false);
+    assert(voice_start_calls==1 && !mission_calls && !s_isArmed);
+    for(unsigned i=0;i<8;i++)BalloonWidget_PollVoicePcm(false);
+    assert(voice_start_calls==1); /* A stable old recording is not retriggered. */
+    button(55); assert(mission_calls==1 && !strcmp(last_mode,"voice"));
+}
+static void test_voice_input_busy_and_maintenance_preserve_existing_task(void) {
+    bool *flags[]={&running,&stopping,&s_missionBusy,&s_voiceCommandRunning,&s_apiNetworkRunning,
+        &s_apiTestRunning,&s_apiTestLiveviewReserved,&s_panelBusy,&timing_requested,&s_timingReserved,
+        &s_timingOwnLiveview,&s_timingOwnSubscription,&release_pending,&s_apiTestCleanupFailed,
+        &s_isArmed,&s_stopNoticePending};
+    for(unsigned i=0;i<sizeof(flags)/sizeof(flags[0]);i++) {
+        reset(); *flags[i]=true; strcpy(s_voiceSession,"keep-current");
+        unsigned old=s_actionEpoch;
+        assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,60,1,NULL)==1);
+        assert(s_actionEpoch==old && !strcmp(s_voiceSession,"keep-current"));
+        assert(!cleared_gate && !voice_clears && !stop_calls && !mission_calls && !thread_calls);
+    }
+    reset(); s_displayOnly=true;
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,50,1,NULL)==4);
+    assert(!cleared_gate && !voice_clears && !mission_calls && !thread_calls);
+    reset(); clock_fail=true; strcpy(s_voiceSession,"stale");
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,50,1,NULL)==2);
+    assert(!s_voiceSession[0] && !mission_calls && !thread_calls && s_apiVoiceResync);
+}
+static void test_voice_input_consumes_busy_audio_and_rearms_fast_new_audio(void) {
+    button(60);
+    pcm_stat.st_mtim.tv_nsec=100;
+    BalloonWidget_PollVoicePcm(true);
+    for(unsigned i=0;i<8;i++)BalloonWidget_PollVoicePcm(false);
+    assert(!voice_start_calls);
+    button(50); /* Snapshot is synchronous, before the next watcher tick. */
+    pcm_stat.st_mtim.tv_nsec=200;
+    for(unsigned i=0;i<4;i++)BalloonWidget_PollVoicePcm(false);
+    assert(voice_start_calls==1 && !mission_calls && !thread_calls && !s_isArmed);
+    pcm_exists=false; BalloonWidget_PollVoicePcm(false);
+    assert(!s_voiceStableCount);
 }
 static void test_sample_confirmation_and_busy(void) {
     button(52); assert(!thread_calls && s_sampleConfirmUntil==16000);
@@ -400,6 +493,9 @@ static void test_maintenance_failures(void) {
 int main(int argc,char **argv) {
     assert(argc==2); reset();
     if(!strcmp(argv[1],"dispatch"))test_registration_and_dispatch();
+    else if(!strcmp(argv[1],"voice_input"))test_voice_input_new_session_never_starts_a_mission();
+    else if(!strcmp(argv[1],"voice_busy"))test_voice_input_busy_and_maintenance_preserve_existing_task();
+    else if(!strcmp(argv[1],"voice_pcm"))test_voice_input_consumes_busy_audio_and_rearms_fast_new_audio();
     else if(!strcmp(argv[1],"sample"))test_sample_confirmation_and_busy();
     else if(!strcmp(argv[1],"spawn_failure"))test_sample_release_and_spawn_failure();
     else if(!strcmp(argv[1],"timing"))test_timing_worker_exclusive_exception();
@@ -430,14 +526,16 @@ class ActualPanelC(unittest.TestCase):
         registration = re.search(r'static const T_DjiWidgetHandlerListItem s_widgetHandlerList\[\] = \{.*?\n\};',
                                  widget, re.DOTALL).group(0)
         functions = [function(widget, 'BalloonWidget_ActionIndex'), function(widget, 'BalloonWidget_HelperBusy'), function(panel, 'BalloonPanel_ClearVoice'),
-                     function(panel, 'BalloonPanel_Idle'), function(panel, 'BalloonPanel_Task'),
+                     function(widget, 'BalloonWidget_ResetVoiceBaseline'), function(panel, 'BalloonPanel_NewVoiceSession'),
+                     function(panel, 'BalloonPanel_Idle'), function(panel, 'BalloonPanel_BeginVoiceInput'),
+                     function(widget, 'BalloonWidget_PollVoicePcm'), function(panel, 'BalloonPanel_Task'),
                      function(panel, 'BalloonPanel_RetryRelease'),
                      function(panel, 'BalloonPanel_StartTool'), function(widget, 'BalloonWidget_TimingStep'),
                      function(widget, 'BalloonWidget_Stop'), function(widget, 'BalloonWidget_SetMaintenance'),
                      function(widget, 'BalloonWidget_ModeText'), function(widget, 'BalloonWidget_SetValue'),
                      function(widget, 'BalloonWidget_GetValue'), function(widget, 'BalloonWidget_StartService')]
         source = cls.folder / 'panel_test.c'
-        source.write_text(PRELUDE + '\n' + macros + '\n' + registration + '\n' + '\n'.join(functions) + EPILOGUE)
+        source.write_text(PRELUDE + VOICE_ENTRY_PRELUDE + '\n' + macros + '\n' + registration + '\n' + '\n'.join(functions) + EPILOGUE)
         cls.binary = cls.folder / 'panel-test'
         command = shlex.split(os.environ.get('CC', 'cc')) + ['-std=gnu11', '-pthread', '-Wno-unused-function',
                    str(source), '-o', str(cls.binary)]
@@ -446,11 +544,47 @@ class ActualPanelC(unittest.TestCase):
             raise AssertionError(built.stderr)
 
     def test_real_widget_and_panel_state_transitions(self):
-        for case in ('dispatch', 'sample', 'spawn_failure', 'timing', 'kalman', 'cancel', 'audit', 'startup', 'display', 'startup_failure', 'maintenance', 'maintenance_busy', 'maintenance_failure'):
+        for case in ('dispatch', 'voice_input', 'voice_busy', 'voice_pcm', 'sample', 'spawn_failure', 'timing', 'kalman', 'cancel', 'audit', 'startup', 'display', 'startup_failure', 'maintenance', 'maintenance_busy', 'maintenance_failure'):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.binary), case], cwd=self.folder, timeout=5,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+
+    def test_actual_mission_gate_rejects_any_and_missing_voice_candidate(self):
+        # Reuse the existing mission harness: every post-gate side effect
+        # asserts if reached. Only the real BeginMission guard is exercised.
+        import test_display_mode as display
+        prelude, count = re.subn(
+            r'static T_DjiReturnCode BalloonWidget_BeginMission\(const char \*mode\) \{.*?\n\}',
+            '', PRELUDE, flags=re.DOTALL)
+        self.assertEqual(count, 1)
+        extra = display.MISSION_EXTRA.replace(
+            'static bool BalloonPanel_VoiceReady(void) { return true; }',
+            'static bool gate_ready; static bool BalloonPanel_VoiceReady(void) { return gate_ready; }')
+        widget = (WIDGET / 'psdk_balloon_widget.c').read_text()
+        source = self.folder / 'voice-confirm-gate.c'
+        source.write_text(prelude + extra + function(widget, 'BalloonWidget_HelperBusy') +
+                          function(widget, 'BalloonWidget_BeginMission') + r"""
+int main(void) {
+    s_displayOnly=false;
+    assert(BalloonWidget_BeginMission("any")==DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE);
+    assert(BalloonWidget_BeginMission("voice")==DJI_ERROR_SYSTEM_MODULE_CODE_BUSY);
+    assert(BalloonWidget_BeginMission("api_new")==DJI_ERROR_SYSTEM_MODULE_CODE_BUSY);
+    gate_ready=true; s_newVoicePending=true;
+    assert(BalloonWidget_BeginMission("voice")==DJI_ERROR_SYSTEM_MODULE_CODE_BUSY);
+    assert(!thread_calls && !child_calls && !cleared_gate && !s_isArmed && !s_missionBusy);
+    assert(s_actionEpoch==0); return 0;
+}
+""")
+        binary = self.folder / 'voice-confirm-gate'
+        built = subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                               ['-std=gnu11', '-pthread', str(source), '-o', str(binary)],
+                               capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        result = subprocess.run([str(binary)], cwd=self.folder, timeout=5,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':

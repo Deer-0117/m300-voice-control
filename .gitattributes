@@ -3,3 +3,5 @@ onboard/code10/balloon-controls/psdk-overlay/samples/sample_c/module_sample/ball
 # Preserve the two current device service snapshots exactly (CRLF).
 onboard/code10/recognition/systemd/balloon-yolo-worker.service -text whitespace=cr-at-eol
 onboard/code10/recognition/systemd/balloon-liveview-decoder.service -text whitespace=cr-at-eol
+# Preserve the upstream/device pixel thresholds exactly (CRLF).
+onboard/code10/recognition/runtime/pixel_callable_module/config.json -text whitespace=cr-at-eol

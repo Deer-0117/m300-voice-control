@@ -24,3 +24,7 @@ inputs/
 third_party/whisper.cpp/
 __pycache__/
 *.pyc
+**/detector_runtime.json
+**/detector_worker.lock
+**/detector_switch.lock
+**/detector_switch_backups/

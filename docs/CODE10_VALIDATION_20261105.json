@@ -1,0 +1,63 @@
+{
+  "date": "2026-11-05",
+  "release_id": "flight-panel-20261105-v7",
+  "binary_sha256": "73d0e68b23aa93d56db46ddc64b819cdd3972cacbaf71c1ce233a0b22d1589fb",
+  "scope": "Previously completed on-device isolated build/tests and fresh read-only source publication checks; no flight mission run for publication.",
+  "isolated_check_groups_passed": 4,
+  "tests": {
+    "0": [
+      "Ran 93 tests in 7.566s",
+      "OK"
+    ],
+    "1": [
+      "authority_stop: 21 groups passed (SDK stubs; no aircraft I/O)"
+    ],
+    "2": [
+      "motion compensation tests passed",
+      "adaptive prediction tests passed",
+      "near lead and constrained approach tests passed",
+      "flight-derived alignment, slew, reversal and recovery tests passed",
+      "hybrid pixel fallback, historical long horizon, near blend and mode tests passed",
+      "delayed bearing KF core tests passed (11 groups)",
+      "live timing contract and pose alignment tests passed",
+      "delayed KF controller integration tests passed (8 groups)",
+      "PASS: zero timestamps, first-sample warmup, unchanged and reverse/reset timestamps",
+      "PASS: uint32 wrap and same-millisecond ordering",
+      "PASS: nonfinite/absurd/untouched SDK angles rejected before baseline",
+      "PASS: borrowed subscription warms up and failed subscribe never reads SDK",
+      "Native source/stub tests passed. No DJI libraries linked or aircraft process started."
+    ],
+    "3": [
+      "Ran 14 tests in 0.609s",
+      "OK",
+      "Ran 19 tests in 1.403s",
+      "OK",
+      "Ran 8 tests in 1.247s",
+      "OK",
+      "Ran 9 tests in 0.067s",
+      "OK",
+      "Ran 5 tests in 0.006s",
+      "OK",
+      "PASS isolated runtime receipts, mission buttons, detector selection and pixel interface"
+    ]
+  },
+  "device_source_checks": {
+    "deployment_time": 85,
+    "publication_time": 148,
+    "publication_byte_identical": 147,
+    "adapted_test": "onboard/code10/recognition/runtime/test_mission_buttons.py"
+  },
+  "api_credentials": {
+    "known_values_checked_inside_device": 4,
+    "matches_found": 0,
+    "credential_values_exported": false
+  },
+  "evidence_sha256": {
+    "build-proof.json": "e17cc3eacc23ef633cc361aac53736996cac92cdaf3a9b8e974325df3b4e3f5f",
+    "post-install-verification.json": "24dba35b0265efaa0d45b56693aa21303715b42cdde8158d989d89825c2dba92"
+  },
+  "actual_flight_test": false,
+  "actual_camera_accuracy_test": false,
+  "production_sources_equal_tested_candidate": true,
+  "publication_test_formatting": "Removed trailing whitespace only from test_visual_preflight.py; test behavior unchanged."
+}

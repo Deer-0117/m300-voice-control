@@ -116,10 +116,10 @@ class DeploymentTests(unittest.TestCase):
                         for i in (69, 60, 61, 52, 53, 54, 65, 66, 67, 68)]
         self.aliases = {60: 50, 61: 51, 65: 55, 66: 56, 67: 57, 68: 58}
         self.names = {
-            'cn': dict(zip(range(50, 59), ('开始测试', 'API联网', '相机/姿态采样', '部署/标定核验',
+            'cn': dict(zip(range(50, 59), ('语音输入任务', 'API联网', '相机/姿态采样', '部署/标定核验',
                                          'Kalman预测模式', '执行API语音任务', '新增API语音任务',
                                          '清除候选语音任务', '停止测试'))),
-            'en': dict(zip(range(50, 59), ('Start test', 'Connect API', 'Camera / pose sampling',
+            'en': dict(zip(range(50, 59), ('Voice task input', 'Connect API', 'Camera / pose sampling',
                                          'Deployment / calibration check', 'Kalman prediction mode',
                                          'Execute API voice task', 'New API voice task',
                                          'Clear voice candidate', 'Stop test'))),

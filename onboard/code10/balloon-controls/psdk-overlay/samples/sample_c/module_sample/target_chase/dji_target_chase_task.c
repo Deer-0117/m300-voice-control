@@ -5,6 +5,7 @@
 #include "target_chase_timing_alignment.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 #include "dji_error.h"
+#include "dji_aircraft_info.h"
 #include "dji_fc_subscription.h"
 #include "dji_flight_controller.h"
 #include "dji_gimbal_manager.h"
@@ -168,9 +170,37 @@ static bool s_manual_takeover = false;
 static bool s_ever_had_authority = false;
 static bool s_intentional_release = false;
 static T_DjiReturnCode s_last_stop_result = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+/* M300/M350 firmware may not implement the native authority-event API.
+ * CONTROL_DEVICE is only decoded for those two models. SDK timestamps have
+ * an aircraft epoch; freshness uses local receipt time, never epoch subtraction.
+ * Only advancing SDK stamps refresh receipt time. Two samples establish a
+ * live subscription before it is accepted as a takeover monitor. */
+#define DJI_TARGET_CHASE_CONTROL_DEVICE_FRESH_MS 150ULL
+#define DJI_TARGET_CHASE_CONTROL_DEVICE_WAIT_MS 500ULL
+typedef struct {
+    bool enabled, subscribed, ready, valid, have_stamp;
+    bool request_issued, awaiting_grant, confirmed;
+    uint8_t device;
+    bool open;
+    T_DjiDataTimestamp stamp;
+    uint64_t receipt_ms, generation, request_generation;
+    unsigned int samples;
+    const char *pending_event;
+} T_DjiTargetChaseControlDeviceMonitor;
+static T_DjiTargetChaseControlDeviceMonitor s_control_device;
+static pthread_mutex_t s_control_device_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool DjiTargetChase_ControlDeviceHealthy(bool require_owner);
+
+void DjiTargetChase_RequestStop(void)
+{
+    /* Called synchronously by the operator-stop path, including while an
+     * SDK request is waiting for control-device confirmation. */
+    __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+}
 
 bool DjiTargetChase_IsControlInhibited(void)
 {
+    (void)DjiTargetChase_ControlDeviceHealthy(false);
     return __atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE);
 }
 
@@ -807,6 +837,14 @@ bool DjiTargetChase_RequestedGimbalTracking(void)
     return mode >= 0 ? mode == 0 : DjiTargetChase_EnvFlagEnabledByDefault("BALLOON_GIMBAL_TRACKING");
 }
 
+static bool DjiTargetChase_VisibleTargetOnly(void)
+{
+    /* Panel tasks preserve the operator's camera view and may move the
+     * gimbal only to center a fresh observed target. Legacy callers retain
+     * their environment-selected reset/search behavior. */
+    return __atomic_load_n(&s_panel_maintenance_mode, __ATOMIC_ACQUIRE) >= 0;
+}
+
 static float DjiTargetChase_ReadFloatEnvBounded(const char *name,
                                                 float fallback,
                                                 float minimum,
@@ -1016,6 +1054,11 @@ static void DjiTargetChase_LogEvent(const char *event,
     char clock_id[80] = {0}, mission_token[96];
     BalloonEvidence_Token(mission_token);
     T_TargetChasePrediction prediction;
+    T_DjiTargetChaseControlDeviceMonitor monitor;
+    pthread_mutex_lock(&s_control_device_mutex);
+    monitor = s_control_device;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    uint64_t logged_ms = DjiTargetChase_NowMs();
     (void) BalloonClock_Id(clock_id);
     memset(&prediction, 0, sizeof(prediction));
     if (s_chase.config.prediction_mode == 0)
@@ -1050,6 +1093,10 @@ static void DjiTargetChase_LogEvent(const char *event,
             "\"world_pitch_rate_degps\":%.3f,"
             "\"gimbal_recenter_active\":%s,"
             "\"has_authority\":%s,\"real_authority\":%s,\"no_flight\":%s,"
+            "\"authority_monitor\":\"%s\",\"control_device_valid\":%s,"
+            "\"control_device_owner\":%u,\"control_device_open\":%s,"
+            "\"control_device_age_ms\":%llu,\"control_device_generation\":%llu,"
+            "\"control_device_confirmed\":%s,"
             "\"vertical_mode\":\"velocity\",\"height_reference\":\"takeoff_relative\","
             "\"start_height_m\":%.3f,"
             "\"altitude_agl_m\":%.3f,\"vel_n_mps\":%.3f,"
@@ -1058,7 +1105,7 @@ static void DjiTargetChase_LogEvent(const char *event,
             "\"in_air\":%s}\n",
             (unsigned long long) event_ms,
             clock_id, mission_token, (unsigned long long) BalloonClock_WallMs(),
-            (unsigned long long) DjiTargetChase_NowMs(),
+            (unsigned long long) logged_ms,
             s_chase.config.prediction_mode, s_chase.hybrid_weight, s_chase.hybrid_horizon_s,
             (unsigned long long) s_chase.target.timestamp_ms,
             s_chase.config.prediction_mode == 0 ? "world_alpha_beta" :
@@ -1096,6 +1143,13 @@ static void DjiTargetChase_LogEvent(const char *event,
             s_chase.has_authority ? "true" : "false",
             __atomic_load_n(&s_real_authority_obtained, __ATOMIC_ACQUIRE) ? "true" : "false",
             s_no_flight_mode ? "true" : "false",
+            monitor.enabled ? "control_device" : "native_callback",
+            monitor.valid ? "true" : "false", (unsigned int)monitor.device,
+            monitor.open ? "true" : "false",
+            (unsigned long long)(monitor.have_stamp && logged_ms >= monitor.receipt_ms ?
+                                 logged_ms - monitor.receipt_ms : 0),
+            (unsigned long long)monitor.generation,
+            monitor.confirmed ? "true" : "false",
             s_start_height_initialized ? s_start_height_m : 0.0f,
             s_chase.aircraft.altitude_agl_m,
             s_chase.aircraft.velocity_neu_mps[0],
@@ -1138,9 +1192,175 @@ static bool DjiTargetChase_IsOptionalAuthorityCallbackFailure(T_DjiReturnCode re
     return return_code == DJI_TARGET_CHASE_ERROR_NONSUPPORT;
 }
 
+/* Call only while holding s_control_device_mutex. A missing/invalid sample
+ * cannot establish a new owner, so possible SDK ownership remains pending
+ * until Release succeeds or a fresh sample identifies RC/app ownership. */
+static void DjiTargetChase_ControlDeviceFault(const char *event)
+{
+    if (s_control_device.valid || !__atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE))
+        s_control_device.pending_event = event;
+    s_control_device.valid = false;
+    __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+}
+
+static bool DjiTargetChase_ControlDeviceHealthy(bool require_owner)
+{
+    bool healthy = true;
+    const char *event;
+    pthread_mutex_lock(&s_control_device_mutex);
+    if (!s_control_device.enabled) {
+        pthread_mutex_unlock(&s_control_device_mutex);
+        return true;
+    }
+    uint64_t now = DjiTargetChase_MonotonicMs();
+    if (s_control_device.enabled) {
+        if (s_control_device.ready && s_control_device.valid &&
+            (now < s_control_device.receipt_ms ||
+             now - s_control_device.receipt_ms > DJI_TARGET_CHASE_CONTROL_DEVICE_FRESH_MS))
+            DjiTargetChase_ControlDeviceFault("control_device_samples_stale");
+        healthy = s_control_device.ready && s_control_device.valid &&
+                  now >= s_control_device.receipt_ms &&
+                  now - s_control_device.receipt_ms <= DJI_TARGET_CHASE_CONTROL_DEVICE_FRESH_MS;
+        if (require_owner)
+            healthy = healthy && s_control_device.confirmed &&
+                      s_control_device.device == 4 && s_control_device.open;
+    }
+    event = s_control_device.pending_event;
+    s_control_device.pending_event = NULL;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    if (event != NULL)
+        DjiTargetChase_LogEvent(event, now, DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE, NULL);
+    return healthy;
+}
+
+static T_DjiReturnCode DjiTargetChase_ControlDeviceCallback(
+    const uint8_t *data, uint16_t size, const T_DjiDataTimestamp *stamp)
+{
+    T_DjiFcSubscriptionControlDevice sample;
+    uint64_t now = DjiTargetChase_MonotonicMs();
+    pthread_mutex_lock(&s_control_device_mutex);
+    if (!s_control_device.enabled) goto done;
+    if (data == NULL || stamp == NULL || size != sizeof(sample)) {
+        DjiTargetChase_ControlDeviceFault("control_device_invalid_sample");
+        goto done;
+    }
+    memcpy(&sample, data, sizeof(sample));
+    if (sample.deviceStatus != 0 && sample.deviceStatus != 1 && sample.deviceStatus != 4) {
+        DjiTargetChase_ControlDeviceFault("control_device_unknown_owner");
+        goto done;
+    }
+    if (s_control_device.have_stamp) {
+        bool same = stamp->millisecond == s_control_device.stamp.millisecond &&
+                    stamp->microsecond == s_control_device.stamp.microsecond;
+        bool regressed = stamp->millisecond < s_control_device.stamp.millisecond ||
+            (stamp->millisecond == s_control_device.stamp.millisecond &&
+             stamp->microsecond < s_control_device.stamp.microsecond);
+        if (regressed || (same && (sample.deviceStatus != s_control_device.device ||
+                                  (sample.flightStatus != 0) != s_control_device.open))) {
+            DjiTargetChase_ControlDeviceFault("control_device_stamp_invalid");
+            goto done;
+        }
+        if (same) goto done; /* Cached samples cannot keep the monitor alive. */
+        if (s_control_device.ready && now - s_control_device.receipt_ms >
+            DJI_TARGET_CHASE_CONTROL_DEVICE_FRESH_MS)
+            DjiTargetChase_ControlDeviceFault("control_device_samples_stale");
+    }
+    s_control_device.stamp = *stamp;
+    s_control_device.have_stamp = true;
+    s_control_device.receipt_ms = now;
+    ++s_control_device.generation;
+    if (s_control_device.samples < 2) ++s_control_device.samples;
+    s_control_device.device = sample.deviceStatus;
+    s_control_device.open = sample.flightStatus != 0;
+    /* Once faulted, newer samples identify ownership for cleanup only; they
+     * never reset the stop latch or silently revive a running mission. */
+    if (!__atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE))
+        s_control_device.valid = true;
+    bool owned = sample.deviceStatus == 4 && sample.flightStatus == 1;
+    if (owned && s_control_device.request_issued &&
+        s_control_device.generation > s_control_device.request_generation) {
+        s_control_device.confirmed = true;
+        s_control_device.awaiting_grant = false;
+        __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
+        __atomic_store_n(&s_ever_had_authority, true, __ATOMIC_RELEASE);
+        /* A late grant remains inhibited, but must be released by Abort. */
+        __atomic_store_n(&s_manual_takeover, false, __ATOMIC_RELEASE);
+    } else if (!owned && s_control_device.confirmed) {
+        s_control_device.confirmed = false;
+        __atomic_store_n(&s_real_authority_obtained, false, __ATOMIC_RELEASE);
+        if (!__atomic_load_n(&s_intentional_release, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+            __atomic_store_n(&s_manual_takeover, true, __ATOMIC_RELEASE);
+            s_control_device.pending_event = "control_device_operator_takeover";
+        }
+    }
+done:
+    pthread_mutex_unlock(&s_control_device_mutex);
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+static void DjiTargetChase_ControlDeviceStop(void)
+{
+    pthread_mutex_lock(&s_control_device_mutex);
+    bool subscribed = s_control_device.subscribed;
+    s_control_device.enabled = false;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    if (subscribed) (void)DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
+    pthread_mutex_lock(&s_control_device_mutex);
+    memset(&s_control_device, 0, sizeof(s_control_device));
+    pthread_mutex_unlock(&s_control_device_mutex);
+}
+
+static T_DjiReturnCode DjiTargetChase_ControlDeviceStart(void)
+{
+    T_DjiAircraftInfoBaseInfo aircraft = {0};
+    T_DjiReturnCode code = DjiAircraftInfo_GetBaseInfo(&aircraft);
+    if (!DjiTargetChase_IsSuccess(code) ||
+        (aircraft.aircraftType != DJI_AIRCRAFT_TYPE_M300_RTK &&
+         aircraft.aircraftType != DJI_AIRCRAFT_TYPE_M350_RTK)) {
+        DjiTargetChase_LogEvent("control_device_aircraft_unsupported", DjiTargetChase_NowMs(),
+                                DJI_TARGET_CHASE_ERROR_NONSUPPORT, NULL);
+        return DJI_TARGET_CHASE_ERROR_NONSUPPORT;
+    }
+    pthread_mutex_lock(&s_control_device_mutex);
+    memset(&s_control_device, 0, sizeof(s_control_device));
+    s_control_device.enabled = true;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    code = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
+        DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, DjiTargetChase_ControlDeviceCallback);
+    if (!DjiTargetChase_IsSuccess(code)) {
+        DjiTargetChase_ControlDeviceStop();
+        return code;
+    }
+    pthread_mutex_lock(&s_control_device_mutex);
+    s_control_device.subscribed = true;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    uint64_t start = DjiTargetChase_MonotonicMs();
+    while (DjiTargetChase_MonotonicMs() - start < DJI_TARGET_CHASE_CONTROL_DEVICE_WAIT_MS) {
+        pthread_mutex_lock(&s_control_device_mutex);
+        bool live = s_control_device.valid && s_control_device.samples >= 2;
+        if (live) s_control_device.ready = true;
+        pthread_mutex_unlock(&s_control_device_mutex);
+        if (__atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE)) break;
+        if (live && DjiTargetChase_ControlDeviceHealthy(false)) {
+            DjiTargetChase_LogEvent("control_device_monitor_ready", DjiTargetChase_NowMs(), 0, NULL);
+            return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+        }
+        usleep(10000);
+    }
+    __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+    DjiTargetChase_LogEvent("control_device_monitor_unavailable", DjiTargetChase_NowMs(),
+                            DJI_ERROR_SYSTEM_MODULE_CODE_TIMEOUT, NULL);
+    return DJI_ERROR_SYSTEM_MODULE_CODE_TIMEOUT;
+}
+
 static T_DjiReturnCode DjiTargetChase_ProfileJoystick(T_DjiFlightControllerJoystickCommand command)
 {
     uint64_t begin = DjiTargetChase_ProfileBegin();
+    /* This also guards zero/hover/repeated/search/abort commands. Unknown,
+     * stale, or unconfirmed ownership never authorizes a joystick write. */
+    if (!DjiTargetChase_ControlDeviceHealthy(true))
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
     if (__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE) ||
         (DjiTargetChase_IsControlInhibited() &&
          (command.x != 0.0f || command.y != 0.0f || command.z != 0.0f || command.yaw != 0.0f)))
@@ -1350,7 +1570,11 @@ static T_DjiReturnCode DjiTargetChase_BeginGimbalReset(uint64_t now_ms,
 {
     T_DjiReturnCode return_code;
 
+    if (DjiTargetChase_IsControlInhibited())
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
     DjiTargetChase_StopGimbal(now_ms, "gimbal_stop_before_reset", true);
+    if (DjiTargetChase_IsControlInhibited())
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
     return_code = DjiGimbalManager_Reset(DJI_TARGET_CHASE_GIMBAL_MOUNT_POSITION,
                                          DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
     if (!DjiTargetChase_IsSuccess(return_code)) {
@@ -2186,10 +2410,13 @@ void DjiTargetChase_GimbalTick(uint64_t now_ms)
 static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
 {
     T_DjiReturnCode return_code;
+    const bool visible_target_only = DjiTargetChase_VisibleTargetOnly();
 
     s_gimbal_tracking_enabled = false;
-    s_gimbal_static_test_mode = DjiTargetChase_EnvFlagEnabled("BALLOON_GIMBAL_STATIC_TEST");
-    s_gimbal_search_enabled = DjiTargetChase_EnvFlagEnabledByDefault("BALLOON_GIMBAL_SEARCH");
+    s_gimbal_static_test_mode = !visible_target_only &&
+        DjiTargetChase_EnvFlagEnabled("BALLOON_GIMBAL_STATIC_TEST");
+    s_gimbal_search_enabled = !visible_target_only &&
+        DjiTargetChase_EnvFlagEnabledByDefault("BALLOON_GIMBAL_SEARCH");
     s_body_search_enabled =
         s_gimbal_search_enabled &&
         DjiTargetChase_EnvFlagEnabled("BALLOON_BODY_SEARCH");
@@ -2297,24 +2524,29 @@ static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
     }
     s_gimbal_manager_initialized = true;
 
-    return_code = DjiGimbalManager_SetMode(DJI_TARGET_CHASE_GIMBAL_MOUNT_POSITION,
+    if (DjiTargetChase_IsControlInhibited()) return;
+    if (!visible_target_only) {
+        return_code = DjiGimbalManager_SetMode(DJI_TARGET_CHASE_GIMBAL_MOUNT_POSITION,
                                            DJI_GIMBAL_MODE_YAW_FOLLOW);
-    if (!DjiTargetChase_IsSuccess(return_code)) {
-        DjiTargetChase_LogGimbalEvent("gimbal_yaw_follow_mode_failed",
+        if (!DjiTargetChase_IsSuccess(return_code)) {
+            DjiTargetChase_LogGimbalEvent("gimbal_yaw_follow_mode_failed",
                                       now_ms,
                                       return_code,
                                       NULL,
                                       0.0f,
                                       0.0f);
-        (void) DjiGimbalManager_Deinit();
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
-        s_gimbal_manager_initialized = false;
-        s_gimbal_angles_subscribed = false;
-        return;
+            (void) DjiGimbalManager_Deinit();
+            (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+            s_gimbal_manager_initialized = false;
+            s_gimbal_angles_subscribed = false;
+            return;
+        }
     }
 
+    if (DjiTargetChase_IsControlInhibited()) return;
     s_gimbal_tracking_enabled = true;
     DjiTargetChase_LogGimbalEvent(
+        visible_target_only ? "gimbal_visible_target_only_configured" :
         s_body_search_enabled
             ? "gimbal_body_search_coverage_configured"
             : "gimbal_only_search_configured",
@@ -2335,6 +2567,18 @@ static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
     (void) DjiGimbalManager_SetControllerMaxSpeedPercentage(DJI_TARGET_CHASE_GIMBAL_MOUNT_POSITION,
                                                             DJI_GIMBAL_AXIS_YAW,
                                                             DJI_TARGET_CHASE_GIMBAL_MAX_SPEED_PERCENT);
+    if (visible_target_only) {
+        if (DjiTargetChase_IsControlInhibited()) return;
+        /* READY with no observation waits without motion. The first valid
+         * OnTarget call transitions to TRACKING and centers that target. */
+        s_gimbal_state = DJI_TARGET_CHASE_GIMBAL_READY;
+        (void) DjiTargetChase_UpdateGimbalBoresight(now_ms, NULL);
+        DjiTargetChase_LogGimbalEvent("gimbal_wait_visible_target_preserve_pose",
+                                      now_ms,
+                                      DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
+                                      NULL, 0.0f, 0.0f);
+        return;
+    }
     return_code = DjiTargetChase_BeginGimbalReset(now_ms,
                                                   "gimbal_start_reset_requested",
                                                   "gimbal_start_reset_failed");
@@ -2352,7 +2596,8 @@ static void DjiTargetChase_DeInitGimbalTracking(uint64_t now_ms)
         if (!__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE))
             DjiTargetChase_StopGimbal(now_ms, "gimbal_shutdown_stop", true);
         /* A stop/takeover must not move the camera back to its reset pose. */
-        if (!DjiTargetChase_IsControlInhibited()) {
+        if (!DjiTargetChase_IsControlInhibited() &&
+            !DjiTargetChase_VisibleTargetOnly()) {
             s_gimbal_state = DJI_TARGET_CHASE_GIMBAL_RESETTING;
             DjiTargetChase_LogGimbalEvent("gimbal_shutdown_reset_requested", now_ms,
                 DjiGimbalManager_Reset(DJI_TARGET_CHASE_GIMBAL_MOUNT_POSITION,
@@ -2581,6 +2826,10 @@ static void DjiTargetChase_QuaternionToEulerDeg(const T_DjiFcSubscriptionQuatern
 static T_DjiReturnCode DjiTargetChase_AuthorityEventCallback(
     T_DjiFlightControllerJoystickCtrlAuthorityEventInfo event_data)
 {
+    pthread_mutex_lock(&s_control_device_mutex);
+    bool compatibility_monitor = s_control_device.enabled;
+    pthread_mutex_unlock(&s_control_device_mutex);
+    if (compatibility_monitor) return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
     const bool has_authority =
         event_data.curJoystickCtrlAuthority == DJI_FLIGHT_CONTROLLER_JOYSTICK_CTRL_AUTHORITY_OSDK;
 
@@ -2607,6 +2856,78 @@ static T_DjiReturnCode DjiTargetChase_AuthorityEventCallback(
                             s_last_now_ms,
                             DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
                             NULL);
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+static T_DjiReturnCode DjiTargetChase_ObtainAuthority(uint64_t now_ms, const char *event)
+{
+    if (!DjiTargetChase_ControlDeviceHealthy(false) || DjiTargetChase_IsControlInhibited())
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    pthread_mutex_lock(&s_control_device_mutex);
+    bool compatibility_monitor = s_control_device.enabled;
+    if (compatibility_monitor) {
+        /* Do not adopt a grant belonging to an earlier/external SDK session. */
+        if (s_control_device.device == 4 && s_control_device.open) {
+            DjiTargetChase_ControlDeviceFault("control_device_unrequested_sdk_owner");
+            pthread_mutex_unlock(&s_control_device_mutex);
+            return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+        }
+        s_control_device.request_issued = true;
+        s_control_device.awaiting_grant = true;
+        s_control_device.confirmed = false;
+        s_control_device.request_generation = s_control_device.generation;
+    }
+    pthread_mutex_unlock(&s_control_device_mutex);
+    DjiTargetChase_SetJoystickMode();
+    if (DjiTargetChase_IsControlInhibited())
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    /* An ACK timeout does not prove that the aircraft rejected the request.
+     * Preserve possible ownership even on failure, until explicit release or
+     * a confirmed SDK->RC/app transition resolves it. */
+    if (compatibility_monitor)
+        __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
+    T_DjiReturnCode code = DjiFlightController_ObtainJoystickCtrlAuthority();
+    DjiTargetChase_LogEvent(event, now_ms, code, NULL);
+    if (!DjiTargetChase_IsSuccess(code)) {
+        if (compatibility_monitor) {
+            pthread_mutex_lock(&s_control_device_mutex);
+            s_control_device.awaiting_grant = false;
+            __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+            pthread_mutex_unlock(&s_control_device_mutex);
+        }
+        return code;
+    }
+    if (compatibility_monitor) {
+        /* API success alone is only possible ownership. No command, including
+         * zero, is allowed until a newer subscription sample confirms it. */
+        pthread_mutex_lock(&s_control_device_mutex);
+        if (!__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE))
+            __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
+        pthread_mutex_unlock(&s_control_device_mutex);
+        uint64_t start = DjiTargetChase_MonotonicMs();
+        while (DjiTargetChase_MonotonicMs() - start < DJI_TARGET_CHASE_CONTROL_DEVICE_WAIT_MS) {
+            if (DjiTargetChase_IsControlInhibited()) break;
+            if (DjiTargetChase_ControlDeviceHealthy(true)) {
+                TargetChase_SetAuthority(&s_chase, true, now_ms);
+                DjiTargetChase_LogEvent("control_device_authority_confirmed", DjiTargetChase_NowMs(), 0, NULL);
+                return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+            }
+            usleep(10000);
+        }
+        pthread_mutex_lock(&s_control_device_mutex);
+        s_control_device.awaiting_grant = false;
+        __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+        pthread_mutex_unlock(&s_control_device_mutex);
+        DjiTargetChase_LogEvent("control_device_authority_confirmation_failed", DjiTargetChase_NowMs(),
+                                DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE, NULL);
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    }
+    if (__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE))
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    __atomic_store_n(&s_ever_had_authority, true, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
+    if (DjiTargetChase_IsControlInhibited()) return DjiTargetChase_Abort();
+    TargetChase_SetAuthority(&s_chase, true, now_ms);
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
@@ -2938,28 +3259,36 @@ T_DjiReturnCode DjiTargetChase_Init(const T_TargetChaseConfig *config)
     return_code = DjiFlightController_RegJoystickCtrlAuthorityEventCallback(
         DjiTargetChase_AuthorityEventCallback);
     if (!DjiTargetChase_IsSuccess(return_code)) {
-        /*
-         * No-flight fixtures may lack authority event support. Actual flight
-         * must observe an RC takeover, so unsupported callbacks fail closed.
-         */
+        /* An unsupported native callback may use the documented M300/M350
+         * control-device topic, but only after live monitoring is proved. */
+        if (!s_no_flight_mode && DjiTargetChase_IsOptionalAuthorityCallbackFailure(return_code))
+            return_code = DjiTargetChase_ControlDeviceStart();
         if (!s_no_flight_mode || !DjiTargetChase_IsOptionalAuthorityCallbackFailure(return_code)) {
-            /* Real-flight takeover protection requires authority events. */
-            __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
-            DjiTargetChase_LogEvent("authority_callback_required_for_flight", s_last_now_ms, return_code, NULL);
-            /* FC/subscriptions were already initialized; leave no hidden
-             * partially initialized session after rejecting real flight. */
-            s_initialized = true;
-            (void) DjiTargetChase_DeInit();
-            return return_code;
+            if (!DjiTargetChase_IsSuccess(return_code)) {
+                __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+                DjiTargetChase_LogEvent("authority_callback_required_for_flight", s_last_now_ms, return_code, NULL);
+                /* FC/subscriptions were initialized; unwind the rejected
+                 * session, including any compatibility subscription. */
+                s_initialized = true;
+                (void) DjiTargetChase_DeInit();
+                return return_code;
+            }
+        } else {
+            DjiTargetChase_LogEvent("authority_callback_not_supported_no_flight", s_last_now_ms, return_code, NULL);
         }
-        DjiTargetChase_LogEvent("authority_callback_not_supported_no_flight", s_last_now_ms, return_code, NULL);
     }
 
+    if (DjiTargetChase_IsControlInhibited()) goto init_cancelled;
     DjiTargetChase_InitGimbalTracking(s_last_now_ms);
+    if (DjiTargetChase_IsControlInhibited()) goto init_cancelled;
     s_initialized = true;
     s_last_repeat_command_log_ms = 0;
     DjiTargetChase_LogEvent("target_chase_initialized", s_last_now_ms, DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, NULL);
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+init_cancelled:
+    s_initialized = true;
+    (void)DjiTargetChase_DeInit();
+    return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
 }
 
 T_DjiReturnCode DjiTargetChase_DeInit(void)
@@ -2973,6 +3302,7 @@ T_DjiReturnCode DjiTargetChase_DeInit(void)
     T_DjiReturnCode abort_code = DjiTargetChase_Abort();
     DjiTargetChase_DeInitGimbalTracking(s_last_now_ms);
     if (DjiTargetChase_IsReleasePending()) return abort_code;
+    DjiTargetChase_ControlDeviceStop();
     (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_HOME_POINT_SET_STATUS);
     (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
     (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
@@ -3169,21 +3499,8 @@ T_DjiReturnCode DjiTargetChase_RunOnce(uint64_t now_ms)
                                     DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
                                     NULL);
         } else {
-            DjiTargetChase_SetJoystickMode();
-            if (DjiTargetChase_IsControlInhibited())
-                return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
-            return_code = DjiFlightController_ObtainJoystickCtrlAuthority();
-            DjiTargetChase_LogEvent("obtain_authority", now_ms, return_code, NULL);
-            if (!DjiTargetChase_IsSuccess(return_code)) {
-                return return_code;
-            }
-
-            if (__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE))
-                return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
-            __atomic_store_n(&s_ever_had_authority, true, __ATOMIC_RELEASE);
-            __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
-            if (DjiTargetChase_IsControlInhibited()) return DjiTargetChase_Abort();
-            TargetChase_SetAuthority(&s_chase, true, now_ms);
+            return_code = DjiTargetChase_ObtainAuthority(now_ms, "obtain_authority");
+            if (!DjiTargetChase_IsSuccess(return_code)) return return_code;
         }
     }
 
@@ -3255,25 +3572,8 @@ static T_DjiReturnCode DjiTargetChase_EnsureSearchAuthority(uint64_t now_ms)
         return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
     }
 
-    DjiTargetChase_SetJoystickMode();
-    if (DjiTargetChase_IsControlInhibited())
-        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
-    return_code = DjiFlightController_ObtainJoystickCtrlAuthority();
-    DjiTargetChase_LogEvent("body_search_obtain_authority",
-                            now_ms,
-                            return_code,
-                            NULL);
-    if (!DjiTargetChase_IsSuccess(return_code)) {
-        return return_code;
-    }
-
-    if (__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE))
-        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
-    __atomic_store_n(&s_ever_had_authority, true, __ATOMIC_RELEASE);
-    __atomic_store_n(&s_real_authority_obtained, true, __ATOMIC_RELEASE);
-    if (DjiTargetChase_IsControlInhibited()) return DjiTargetChase_Abort();
-    TargetChase_SetAuthority(&s_chase, true, now_ms);
-    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+    return_code = DjiTargetChase_ObtainAuthority(now_ms, "body_search_obtain_authority");
+    return return_code;
 }
 
 static T_DjiReturnCode DjiTargetChase_SendBodySearchCommand(float forward_mps,
@@ -3568,6 +3868,19 @@ T_DjiReturnCode DjiTargetChase_RequestSearch(uint64_t now_ms,
     s_search_sector_index = 0;
     s_search_exhausted = false;
 
+    if (DjiTargetChase_VisibleTargetOnly()) {
+        s_body_search_turn_active = false;
+        s_body_search_turn_heading_valid = false;
+        s_body_search_turn_start_mono_ms = 0;
+        if (s_gimbal_tracking_enabled) {
+            DjiTargetChase_StopGimbal(now_ms, "stage_visible_target_wait_stop", true);
+            s_gimbal_state = DJI_TARGET_CHASE_GIMBAL_READY;
+        }
+        DjiTargetChase_LogEvent("stage_visible_target_wait", now_ms,
+                                DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, NULL);
+        return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+    }
+
     if (!s_gimbal_tracking_enabled || !s_gimbal_search_enabled) {
         DjiTargetChase_LogEvent("stage_search_requested_without_gimbal_search",
                                 now_ms,
@@ -3799,8 +4112,13 @@ T_DjiReturnCode DjiTargetChase_Abort(void)
         !__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE)) {
         T_TargetChaseCommand zero_command = {0};
         zero_command.should_send = true;
-        zero_code = DjiTargetChase_SendZeroCommand();
-        DjiTargetChase_LogEvent("abort_zero_joystick_action", s_last_now_ms, zero_code, &zero_command);
+        if (DjiTargetChase_ControlDeviceHealthy(true)) {
+            zero_code = DjiTargetChase_SendZeroCommand();
+            DjiTargetChase_LogEvent("abort_zero_joystick_action", s_last_now_ms, zero_code, &zero_command);
+        } else {
+            DjiTargetChase_LogEvent("abort_zero_skipped_unconfirmed_owner", s_last_now_ms,
+                                    DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE, NULL);
+        }
         /* A callback may have transferred control during the zero command. */
         if (__atomic_load_n(&s_real_authority_obtained, __ATOMIC_ACQUIRE) &&
             !__atomic_load_n(&s_manual_takeover, __ATOMIC_ACQUIRE)) {
@@ -3808,8 +4126,14 @@ T_DjiReturnCode DjiTargetChase_Abort(void)
             release_code = DjiFlightController_ReleaseJoystickCtrlAuthority();
             __atomic_store_n(&s_intentional_release, false, __ATOMIC_RELEASE);
             DjiTargetChase_LogEvent("abort_release_authority", s_last_now_ms, release_code, NULL);
-            if (DjiTargetChase_IsSuccess(release_code))
+            if (DjiTargetChase_IsSuccess(release_code)) {
+                pthread_mutex_lock(&s_control_device_mutex);
+                s_control_device.request_issued = false;
+                s_control_device.awaiting_grant = false;
+                s_control_device.confirmed = false;
                 __atomic_store_n(&s_real_authority_obtained, false, __ATOMIC_RELEASE);
+                pthread_mutex_unlock(&s_control_device_mutex);
+            }
         }
     }
     /* Preserve real ownership after a failed release, so a later explicit

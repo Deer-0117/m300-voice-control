@@ -37,10 +37,10 @@ WIDGET_SCHEMA = ([['main', index, 'button'] for index in (50, 51, 55, 56, 57, 58
                  [['config', index, 'switch' if index in (54, 69) else 'button']
                   for index in (69, 60, 61, 52, 53, 54, 65, 66, 67, 68)])
 WIDGET_NAMES = {
-    'cn': {50: '开始测试', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
+    'cn': {50: '语音输入任务', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
            54: 'Kalman预测模式', 55: '执行API语音任务', 56: '新增API语音任务',
            57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护'},
-    'en': {50: 'Start test', 51: 'Connect API', 52: 'Camera / pose sampling',
+    'en': {50: 'Voice task input', 51: 'Connect API', 52: 'Camera / pose sampling',
            53: 'Deployment / calibration check', 54: 'Kalman prediction mode',
            55: 'Execute API voice task', 56: 'New API voice task',
            57: 'Clear voice candidate', 58: 'Stop test', 69: 'Display only / maintenance'},

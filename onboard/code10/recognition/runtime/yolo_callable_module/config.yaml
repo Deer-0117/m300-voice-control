@@ -1,0 +1,5 @@
+weights: weights/best.pt
+imgsz: 640
+conf: 0.25
+device: null
+save: false

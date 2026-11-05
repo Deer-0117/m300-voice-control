@@ -15,7 +15,7 @@
       {
         "widget_index": 50,
         "widget_type": "button",
-        "widget_name": "开始测试",
+        "widget_name": "语音输入任务",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -99,7 +99,7 @@
       {
         "widget_index": 60,
         "widget_type": "button",
-        "widget_name": "开始测试",
+        "widget_name": "语音输入任务",
         "customize_rc_buttons_config": {
           "is_enable": false
         }

@@ -59,6 +59,19 @@ T_DjiReturnCode DjiFlightController_ExecuteJoystickAction(T_DjiFlightControllerJ
     sdk_command = command;
     return sdk_result;
 }
+/* Performance-wrapper fixtures do not enable telemetry authority fallback;
+ * any incidental SDK discovery/read must fail rather than reaching hardware. */
+T_DjiReturnCode DjiAircraftInfo_GetBaseInfo(T_DjiAircraftInfoBaseInfo *info)
+{
+    (void)info;
+    return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT;
+}
+T_DjiReturnCode DjiFcSubscription_GetLatestValueOfTopic(E_DjiFcSubscriptionTopic topic,
+    uint8_t *data, uint16_t size, T_DjiDataTimestamp *stamp)
+{
+    (void)topic; (void)data; (void)size; (void)stamp;
+    return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT;
+}
 
 static void prepare_controller(int mode)
 {

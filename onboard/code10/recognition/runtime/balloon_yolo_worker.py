@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Persistent YOLO worker for PSDK balloon photo requests.
+"""Persistent selectable detector worker for PSDK balloon photo requests.
 
 The PSDK app writes only the latest downloaded photo request to
-latest_detection_request.tsv. This worker keeps YOLO loaded once and processes
+latest_detection_request.tsv. This worker keeps one detector loaded and processes
 the newest request, intentionally dropping intermediate overwritten requests.
 """
 
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from hardcase_protocol import DEFAULT_IPC_DIR, WorkerProducer, restore_source_references
+import balloon_visual_receipt as visual_receipt
+from detector_selector import load_detector as select_detector, detector_metadata
 
 from uav_capabilities import (
     CapabilityError,
@@ -54,8 +56,7 @@ SEARCH_REQUEST_FILE = Path("/tmp/balloon_target_search.request")
 NEAR_RATE_HINT_FILE = Path("/dev/shm/balloon_near_rate.hint")
 WORKER_SESSION_ID = uuid.uuid4().hex
 
-if YOLO_ENV_PYTHON.exists() and Path(sys.executable) != YOLO_ENV_PYTHON:
-    os.execv(str(YOLO_ENV_PYTHON), [str(YOLO_ENV_PYTHON), *sys.argv])
+# The service chooses the interpreter; importing this module never re-execs it.
 
 
 
@@ -1255,9 +1256,13 @@ class CapabilityTaskSequence:
         )
         return best
 
-    def select(self, detections: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def select(self, detections: list[dict[str, Any]], *,
+               expected_visual_context: dict | None = None) -> dict[str, Any] | None:
         gate = getattr(self, "mission_gate", None)
         if gate is not None and not gate.poll(self):
+            return None
+        if expected_visual_context is not None and (
+                gate is None or gate.visual_context != expected_visual_context):
             return None
         if gate is None:
             self._load_plan()
@@ -1709,7 +1714,7 @@ class TensorRTWithFallbackDetector:
             return self.fallback.predict_records(source)
 
 
-def load_detector() -> tuple[Any, dict[str, Any], Any]:
+def load_yolo_detector() -> tuple[Any, dict[str, Any], Any]:
     sys.path.insert(0, str(YOLO_MODULE))
     import yolo_infer  # type: ignore
 
@@ -1776,6 +1781,12 @@ def load_detector() -> tuple[Any, dict[str, Any], Any]:
     return detector, config, weights
 
 
+def load_detector() -> tuple[Any, dict[str, Any], Any]:
+    detector, config, weights = select_detector(yolo_factory=load_yolo_detector)
+    append_control_event("worker_detector_selected", detector_metadata(detector, config))
+    return detector, config, weights
+
+
 def warmup(detector: Any, config: dict[str, Any]) -> None:
     started = time.perf_counter()
     try:
@@ -1790,6 +1801,7 @@ def warmup(detector: Any, config: dict[str, Any]) -> None:
         )
     except Exception as exc:
         append_control_event("worker_warmup_error", {"error": repr(exc)})
+        raise
 
 
 def write_latest_target(payload: dict[str, Any], best: dict[str, Any] | None,
@@ -1843,6 +1855,7 @@ def write_latest_target(payload: dict[str, Any], best: dict[str, Any] | None,
 def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any],
                     log_path: Path, target_label: str,
                     hardcase: WorkerProducer | None = None) -> None:
+    visual_context = visual_receipt.snapshot(TASK_SEQUENCE)
     capture = None
     if hardcase is not None:
         with contextlib.suppress(Exception):
@@ -1895,13 +1908,16 @@ def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any]
         latency_ms = round((time.perf_counter() - predict_started) * 1000, 3)
         primary_detector = getattr(detector, "primary", detector)
         software_auto_exposure = getattr(primary_detector, "last_auto_exposure_info", None)
-        record_latency("yolo_predict", latency_ms, detection_count=len(detections))
+        record_latency("pixel_predict" if config["active_detector"] == "pixel" else "yolo_predict",
+                       latency_ms, detection_count=len(detections), backend=detector.backend_name)
         enriched = [detect_latest_photo.enrich_detection(item, width, height) for item in detections]
-        classify_balloon_colors(detect_source, enriched)
+        if not getattr(detector, "provides_colors", False):
+            classify_balloon_colors(detect_source, enriched)
         far_tile_latency_ms = 0.0
         far_tile_detection_count = 0
         if (
-            width is not None
+            getattr(detector, "supports_far_tiles", True)
+            and width is not None
             and height is not None
             and TASK_SEQUENCE.should_use_far_tiles(enriched)
         ):
@@ -1930,7 +1946,17 @@ def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any]
         observation_age_ms = max(0, now_ms() - target_timestamp_ms)
         for item in candidates:
             item["observation_age_ms"] = observation_age_ms
-        best_balloon = TASK_SEQUENCE.select(candidates)
+        frame_evidence = dict(payload, detection_finished_ts_ms=now_ms())
+        frame_current = visual_receipt.frame_is_current(
+            TASK_SEQUENCE, visual_context, frame_evidence, width, height, config['active_detector'])
+        if getattr(TASK_SEQUENCE, 'mission_gate', None) is None:
+            best_balloon = TASK_SEQUENCE.select(candidates)
+        elif frame_current:
+            best_balloon = TASK_SEQUENCE.select(candidates, expected_visual_context=visual_context)
+        else:
+            # select([]) also advances missing/hit state; a frame from before
+            # this action must not influence either tracking or task outcomes.
+            best_balloon = None
         detection_finished_ts_ms = now_ms()
         record_latency("detection_total", detection_finished_ts_ms - detection_started_ts_ms)
         if req.capture_ts_ms > 0:
@@ -1947,12 +1973,7 @@ def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any]
         payload.update(
             {
                 "ok": True,
-                "weights": str(config["weights"].resolve()),
-                "backend": detector.backend_name,
-                "imgsz": config["imgsz"],
-                "conf": config["conf"],
-                "device": config["device"],
-                "save": config["save"],
+                **detector_metadata(detector, config),
                 "latency_ms": latency_ms,
                 "far_tile_latency_ms": far_tile_latency_ms,
                 "far_tile_detection_count": far_tile_detection_count,
@@ -1978,6 +1999,8 @@ def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any]
         )
         if capture is not None:
             restore_source_references(payload, capture.path, req.source)
+        visual_receipt.publish(TASK_SEQUENCE, visual_context, payload, best_balloon,
+                               width, height, config['active_detector'])
         write_latest_target(payload, best_balloon, width, height)
     except Exception as exc:
         payload["error"] = repr(exc)
@@ -1998,7 +2021,7 @@ def process_request(req: DetectionRequest, detector: Any, config: dict[str, Any]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Persistent YOLO worker for PSDK balloon photos.")
+    parser = argparse.ArgumentParser(description="Persistent configurable detector for PSDK balloon photos.")
     parser.add_argument("--request-file", type=Path, default=REQUEST_FILE)
     parser.add_argument("--log", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--target-label", default="balloon")
@@ -2014,6 +2037,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    # A second worker must not publish to the same request/target channels.
+    import fcntl
+    worker_lock = (ROOT / "detector_worker.lock").open("a")
+    fcntl.flock(worker_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     stop = False
 
     def handle_stop(signum: int, frame: Any) -> None:
@@ -2034,6 +2061,16 @@ def main() -> int:
             append_control_event("hardcase_initialization_unavailable", {"error": repr(exc)})
     if not args.no_warmup:
         warmup(detector, config)
+    neural_imports = sorted(name for name in ("torch", "ultralytics", "tensorrt", "yolo_infer", "balloon_tensorrt")
+                            if name in sys.modules)
+    if config["active_detector"] == "pixel" and neural_imports:
+        raise RuntimeError(f"Pixel mode unexpectedly loaded neural modules: {neural_imports}")
+    atomic_write_json(ROOT / "detector_runtime.json", {
+        **detector_metadata(detector, config), "pid": os.getpid(),
+        "clock_id": clock_id(), "ready_ts_ms": now_ms(),
+        "neural_modules_loaded": neural_imports,
+        "selector_config": config["selector_settings"],
+    })
     append_control_event("worker_ready", {"poll_ms": args.poll_ms, "backend": detector.backend_name})
 
     from balloon_mission import MissionGate
@@ -2064,4 +2101,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from detector_selector import ensure_script_interpreter
+    ensure_script_interpreter()
     raise SystemExit(main())

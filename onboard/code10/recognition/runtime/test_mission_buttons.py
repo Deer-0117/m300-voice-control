@@ -80,6 +80,23 @@ class MissionTests(unittest.TestCase):
         self.assertFalse(mission.HEALTH.exists())
         self.assertIn('mission_plan_invalid', mission.STOP.read_text())
 
+    def test_visual_ack_changes_immediately_with_action_and_cancellation(self):
+        self.prepare()
+        first = self.gate.visual_snapshot(self.sequence)
+        self.assertEqual(first['requested_color'], 'pink')
+        self.assertGreaterEqual(first['started_ts_ms'], mission.read_json(mission.REQUEST)['started_ts_ms'])
+        # No 100 ms heartbeat delay is allowed when the action changes.
+        self.sequence.current_index = 1
+        with patch.object(mission, 'now_ms', return_value=first['started_ts_ms'] + 1):
+            second = self.gate.visual_snapshot(self.sequence)
+            ack = mission.read_json(mission.ACK)
+            self.assertEqual(ack['current_index'], 1)
+            self.assertEqual(ack['requested_color'], 'yellow')
+            self.assertEqual(second['started_ts_ms'], first['started_ts_ms'] + 1)
+        mission.TOKEN.unlink()
+        self.assertIsNone(self.gate.visual_snapshot(self.sequence))
+        self.assertFalse(mission.ACK.exists())
+
     def test_changed_same_id_plan_rejected(self):
         self.prepare()
         plan = mission.read_json(mission.PLAN)
@@ -210,11 +227,11 @@ class MissionTests(unittest.TestCase):
             self.assertTrue(config['main_interface']['speaker']['is_enable_voice'])
             self.assertFalse(config['main_interface']['speaker']['is_enable_tts'])
             # New IDs prevent cached 18-29 controls from triggering new actions.
-            names = ({50: '开始测试', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
+            names = ({50: '语音输入任务', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
                       54: 'Kalman预测模式', 55: '执行API语音任务', 56: '新增API语音任务',
                       57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护'}
                      if language == 'cn' else
-                     {50: 'Start test', 51: 'Connect API', 52: 'Camera / pose sampling',
+                     {50: 'Voice task input', 51: 'Connect API', 52: 'Camera / pose sampling',
                       53: 'Deployment / calibration check', 54: 'Kalman prediction mode',
                       55: 'Execute API voice task', 56: 'New API voice task',
                       57: 'Clear voice candidate', 58: 'Stop test', 69: 'Display only / maintenance'})

@@ -108,6 +108,13 @@ T_DjiReturnCode DjiGimbalManager_Rotate(E_DjiMountPosition position, T_DjiGimbal
 void DjiFlightController_SetJoystickMode(T_DjiFlightControllerJoystickMode mode) { (void)mode; }
 T_DjiReturnCode DjiFlightController_ObtainJoystickCtrlAuthority(void) { return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS; }
 T_DjiReturnCode DjiFlightController_ReleaseJoystickCtrlAuthority(void) { return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS; }
+/* These prediction fixtures exercise the callback-backed path. They must not
+ * identify a real aircraft or silently activate the M300 telemetry fallback. */
+T_DjiReturnCode DjiAircraftInfo_GetBaseInfo(T_DjiAircraftInfoBaseInfo *info)
+{
+    (void)info;
+    return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT;
+}
 
 static void prepare(int mode)
 {

@@ -1,0 +1,143 @@
+{
+  "source_repository": "https://github.com/Conti427/uav-balloon-collision",
+  "source_commit": "75469fe8de98bc8e915f544e543010f49be8ee9a",
+  "source_verified_via": "GitHub REST API (authenticated gh); git fetch failed without altering working tree",
+  "deer_main_verified": "ab1a64e09333e1c78d67b90d71e8257bff08638e",
+  "import_frozen_at": "2026-11-05T08:25:33.938513+00:00",
+  "scope": "Selective detector integration. integration_base_sha256 records the detector-import baseline, not final release hashes. Parent-agent visual receipts modify balloon_yolo_worker.py after the import. No SSH or aircraft commands executed for this integration. Models remain external.",
+  "files": [
+    {
+      "source_path": "offline_balloon_strike_test/balloon_yolo_worker.py",
+      "repository_path": "onboard/code10/recognition/runtime/balloon_yolo_worker.py",
+      "upstream_sha256": "76331725d9cc58059450e27097f75fa360ec2735255e1fd46da5b6eb8d9c04e8",
+      "adaptation": "Exact upstream import; parent agent subsequently adds mission-bound visual receipts, outside this integration base hash",
+      "integration_base_sha256": "76331725d9cc58059450e27097f75fa360ec2735255e1fd46da5b6eb8d9c04e8",
+      "final_local_sha256": "d5a11f95d808385dd8d3b0dbda8754084eef2fa675537904bc26b3e5b8860ee8"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/detect_latest_photo.py",
+      "repository_path": "onboard/code10/recognition/runtime/detect_latest_photo.py",
+      "upstream_sha256": "d8ac0bd2107ca6c1c2dea91d0bd8cd428a6033b5a0da2fc3c262efdeac7c94cf",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "d8ac0bd2107ca6c1c2dea91d0bd8cd428a6033b5a0da2fc3c262efdeac7c94cf",
+      "final_local_sha256": "d8ac0bd2107ca6c1c2dea91d0bd8cd428a6033b5a0da2fc3c262efdeac7c94cf"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/hardcase_protocol.py",
+      "repository_path": "onboard/code10/recognition/runtime/hardcase_protocol.py",
+      "upstream_sha256": "d2ecaf1c94b960c02764bd9a994a786cb63cd8c5141f69119fd1fc6a03d77965",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "d2ecaf1c94b960c02764bd9a994a786cb63cd8c5141f69119fd1fc6a03d77965",
+      "final_local_sha256": "d2ecaf1c94b960c02764bd9a994a786cb63cd8c5141f69119fd1fc6a03d77965"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/balloon_detector_worker.py",
+      "repository_path": "onboard/code10/recognition/runtime/balloon_detector_worker.py",
+      "upstream_sha256": "9470c27f2beaeff3ff9e05fd150e510149adf99cd2a7ec5000de5ef281aca987",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "9470c27f2beaeff3ff9e05fd150e510149adf99cd2a7ec5000de5ef281aca987",
+      "final_local_sha256": "9470c27f2beaeff3ff9e05fd150e510149adf99cd2a7ec5000de5ef281aca987"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/detector_selector.py",
+      "repository_path": "onboard/code10/recognition/runtime/detector_selector.py",
+      "upstream_sha256": "aa691ab53cc31f011b3b0346e6999165b4bdf9b30519b7ec7a96d4cfb37e6e85",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "aa691ab53cc31f011b3b0346e6999165b4bdf9b30519b7ec7a96d4cfb37e6e85",
+      "final_local_sha256": "aa691ab53cc31f011b3b0346e6999165b4bdf9b30519b7ec7a96d4cfb37e6e85"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/detector_config.json",
+      "repository_path": "onboard/code10/recognition/runtime/detector_config.json",
+      "upstream_sha256": "49042eeca2cb36520e0752acdca97c3e159ce72af28e4bb4c0f8527af601911f",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "49042eeca2cb36520e0752acdca97c3e159ce72af28e4bb4c0f8527af601911f",
+      "final_local_sha256": "49042eeca2cb36520e0752acdca97c3e159ce72af28e4bb4c0f8527af601911f"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/pixel_callable_module/__init__.py",
+      "repository_path": "onboard/code10/recognition/runtime/pixel_callable_module/__init__.py",
+      "upstream_sha256": "b47b7f52d43bf345f0a43efa6df1beba9860673d6c1605e41610ca17f86a7a14",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "b47b7f52d43bf345f0a43efa6df1beba9860673d6c1605e41610ca17f86a7a14",
+      "final_local_sha256": "b47b7f52d43bf345f0a43efa6df1beba9860673d6c1605e41610ca17f86a7a14"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/pixel_callable_module/config.json",
+      "repository_path": "onboard/code10/recognition/runtime/pixel_callable_module/config.json",
+      "upstream_sha256": "0f618bec92ff803b22897359c155e46290ee2bd159482bfe4d6a41ec2ff5d5e2",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "0f618bec92ff803b22897359c155e46290ee2bd159482bfe4d6a41ec2ff5d5e2",
+      "final_local_sha256": "0f618bec92ff803b22897359c155e46290ee2bd159482bfe4d6a41ec2ff5d5e2"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/pixel_callable_module/detector.py",
+      "repository_path": "onboard/code10/recognition/runtime/pixel_callable_module/detector.py",
+      "upstream_sha256": "ff8d62c1e0dab27d3b08c67d6d245a06f4d26ab09a050ab61fbfde5f66dbb84a",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "ff8d62c1e0dab27d3b08c67d6d245a06f4d26ab09a050ab61fbfde5f66dbb84a",
+      "final_local_sha256": "ff8d62c1e0dab27d3b08c67d6d245a06f4d26ab09a050ab61fbfde5f66dbb84a"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/switch_detector.py",
+      "repository_path": "onboard/code10/recognition/runtime/switch_detector.py",
+      "upstream_sha256": "d941f93026cb556b608bac5aa656ab99e1b74a514ccf2de5b9678572e67f31af",
+      "adaptation": "Require both SDK hosts inactive and task gates absent; read-only status; preserve inactive vision services",
+      "integration_base_sha256": "dac32b9f2a8dac9cb2c3e2ac7fa8dcd7c3156663e43b8c046172532f956f7492",
+      "final_local_sha256": "dac32b9f2a8dac9cb2c3e2ac7fa8dcd7c3156663e43b8c046172532f956f7492"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/tests/test_detector_integration.py",
+      "repository_path": "onboard/code10/recognition/runtime/tests/test_detector_integration.py",
+      "upstream_sha256": "b01bd608c1f7b70d693fb76c0a6eb63d7989d52569f251f46b03b475ee59e5c6",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "b01bd608c1f7b70d693fb76c0a6eb63d7989d52569f251f46b03b475ee59e5c6",
+      "final_local_sha256": "a1b138d9f9cc3255420c75aee26adf9dad6e908873b84a812ffb77c7c90a792d"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/tests/test_pixel_interface.py",
+      "repository_path": "onboard/code10/recognition/runtime/tests/test_pixel_interface.py",
+      "upstream_sha256": "88cc16e7093eeeab223bd2ab2a8f4bb941dc91ab70cda844e58ffe9b6fb9f50b",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "88cc16e7093eeeab223bd2ab2a8f4bb941dc91ab70cda844e58ffe9b6fb9f50b",
+      "final_local_sha256": "88cc16e7093eeeab223bd2ab2a8f4bb941dc91ab70cda844e58ffe9b6fb9f50b"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/yolo_callable_module/config.yaml",
+      "repository_path": "onboard/code10/recognition/runtime/yolo_callable_module/config.yaml",
+      "upstream_sha256": "a2eb152c6a68e13e41b42ea4c65c3a70441218e4a2717473ba1338a3f96c7ca9",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "a2eb152c6a68e13e41b42ea4c65c3a70441218e4a2717473ba1338a3f96c7ca9",
+      "final_local_sha256": "a2eb152c6a68e13e41b42ea4c65c3a70441218e4a2717473ba1338a3f96c7ca9"
+    },
+    {
+      "source_path": "offline_balloon_strike_test/yolo_callable_module/requirements.txt",
+      "repository_path": "onboard/code10/recognition/runtime/yolo_callable_module/requirements.txt",
+      "upstream_sha256": "131b6bd5d1ec92d16447304d12bfd1fa16d2ad01ad44309df3a26116d407da0c",
+      "adaptation": "Exact upstream import before later visual-receipt integration",
+      "integration_base_sha256": "131b6bd5d1ec92d16447304d12bfd1fa16d2ad01ad44309df3a26116d407da0c",
+      "final_local_sha256": "131b6bd5d1ec92d16447304d12bfd1fa16d2ad01ad44309df3a26116d407da0c"
+    },
+    {
+      "source_path": "onboard/systemd/balloon-yolo-worker.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-detector-selector.conf",
+      "repository_path": "onboard/code10/recognition/systemd/balloon-yolo-worker.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-detector-selector.conf",
+      "upstream_sha256": "05e7a8232b417ef2641ea7fc56131aaa2a03b55603ea6a1fdb25f8ebbf8f0a0f",
+      "adaptation": "Exact upstream service-entry override; no device state change",
+      "integration_base_sha256": "05e7a8232b417ef2641ea7fc56131aaa2a03b55603ea6a1fdb25f8ebbf8f0a0f",
+      "final_local_sha256": "05e7a8232b417ef2641ea7fc56131aaa2a03b55603ea6a1fdb25f8ebbf8f0a0f"
+    }
+  ],
+  "local_additions": [
+    "onboard/code10/recognition/runtime/tests/test_detector_switch.py",
+    "onboard/code10/recognition/runtime/DETECTOR_SELECTION.md"
+  ],
+  "validation": {
+    "upstream_detector_tests": 8,
+    "pixel_interface_tests": 5,
+    "switch_guard_tests": 9,
+    "environment": "/private/tmp/m300-validation-env/bin/python; OpenCV 5.0.0, NumPy 2.5.4, Pillow 11.3.0",
+    "hardware_validation": false
+  },
+  "deployed_release": "flight-panel-20261105-v7",
+  "deployment_verified_date": "2026-11-05"
+}

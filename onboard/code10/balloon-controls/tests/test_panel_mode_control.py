@@ -65,7 +65,9 @@ int main(void) {
     assert(sdk_calls == 0);
     assert(DjiTargetChase_Init(&config) == 0);
     assert(s_initialized && !DjiTargetChase_IsNoFlightMode());
-    assert(s_gimbal_tracking_enabled && resets == 1 && sdk_calls > 0);
+    assert(s_gimbal_tracking_enabled && resets == 0 && gimbal_modes == 0 && sdk_calls > 0);
+    assert(s_gimbal_state == DJI_TARGET_CHASE_GIMBAL_READY);
+    assert(!s_gimbal_search_enabled && !s_body_search_enabled && !s_gimbal_static_test_mode);
     unsigned before = sdk_calls;
     assert(DjiTargetChase_SetPanelMaintenance(true) != 0);
     assert(!DjiTargetChase_RequestedNoFlight() && DjiTargetChase_RequestedGimbalTracking());
@@ -98,7 +100,7 @@ class PanelModeControl(unittest.TestCase):
             '#include "'+str(CONTROL/'dji_target_chase_task.c')+'"')
         fixture, count = re.subn(r'\bint main\(void\)', 'static int baseline_main(void)', fixture)
         self.assertEqual(count, 1)
-        stub = re.compile(r'(^[A-Za-z_][^;{}\n]*\bDji(?:FlightController|FcSubscription|Platform|GimbalManager)\w*'
+        stub = re.compile(r'(^[A-Za-z_][^;{}\n]*\bDji(?:AircraftInfo|FlightController|FcSubscription|Platform|GimbalManager)\w*'
                           r'\([^;{}]*\)\s*\{)', re.MULTILINE)
         fixture, count = stub.subn(r'\1 ++sdk_calls;', fixture)
         self.assertGreaterEqual(count, 20)
@@ -108,7 +110,7 @@ class PanelModeControl(unittest.TestCase):
             source.write_text('static unsigned sdk_calls;\n'+fixture+'\n'+MAIN)
             module = sdk/'samples/sample_c/module_sample'
             subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
-                '-std=gnu99','-O2','-Wall','-Wextra','-Werror','-Wno-unused-function',
+                '-std=gnu99','-O2','-Wall','-Wextra','-Werror','-Wno-unused-function','-pthread',
                 '-DCJSON_HIDE_SYMBOLS','-I'+str(sdk/'psdk_lib/include'),'-I'+str(module),
                 str(source),str(CONTROL/'target_chase.c'),str(module/'utils/cJSON.c'),
                 '-lm','-o',str(binary)], check=True, timeout=60, capture_output=True, text=True)

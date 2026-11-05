@@ -104,6 +104,13 @@ class MissionGate:
         self.last_token = None
         self.last_publish = -1000
         self.last_transition = None
+        self.visual_context = None
+
+    def visual_snapshot(self, sequence) -> dict | None:
+        """Bind one frame to the exact validated action before inference."""
+        if not self.poll(sequence):
+            return None
+        return dict(self.visual_context) if self.visual_context else None
 
     def poll(self, sequence) -> bool:
         try:
@@ -129,10 +136,21 @@ class MissionGate:
                         recording.get('status') != 'recording' or not 0 <= age <= 3000):
                     raise ValueError('录像中断或回执过期')
             current = now_ms()
-            if token != self.last_token or current - self.last_publish >= 100:
+            color = actions[sequence.current_index].get('parameters', {}).get('color', 'stop')
+            context = dict(token=token, plan_id=plan['plan_id'], clock_id=clock_id(),
+                           current_index=sequence.current_index, requested_color=color)
+            changed = not self.visual_context or any(self.visual_context.get(k) != v
+                                                     for k, v in context.items())
+            started = request['started_ts_ms']
+            if isinstance(started, bool) or not isinstance(started, int) or not 0 < started <= current:
+                raise ValueError('任务开始时间无效')
+            context['started_ts_ms'] = max(started, current) if changed else self.visual_context['started_ts_ms']
+            self.visual_context = context
+            if changed or token != self.last_token or current - self.last_publish >= 100:
                 receipt = dict(token=token, plan_id=plan['plan_id'], digest=request['digest'],
                                clock_id=clock_id(), ts_ms=current, status='loaded',
-                               current_index=sequence.current_index, worker_pid=os.getpid())
+                               current_index=sequence.current_index, worker_pid=os.getpid(),
+                               requested_color=color, started_ts_ms=context['started_ts_ms'])
                 atomic_json(ACK, receipt)
                 atomic_text(HEALTH, f'{token}\t{clock_id()}\t{current}\n')
                 color = actions[sequence.current_index].get('parameters', {}).get('color', 'stop')
@@ -157,6 +175,7 @@ class MissionGate:
             self.last_error = None
             return True
         except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
+            self.visual_context = None
             HEALTH.unlink(missing_ok=True)
             ACK.unlink(missing_ok=True)
             # Even after a previously valid plan is deleted, never call the
@@ -217,7 +236,7 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
     atomic_json(STATE, dict(plan_id=plan['plan_id'], status='queued', current_index=0))
     STOP.unlink(missing_ok=True)
     request = dict(token=token, mode=mode, record=record, plan_id=plan['plan_id'],
-                   digest=digest(plan), clock_id=clock_id())
+                   digest=digest(plan), clock_id=clock_id(), started_ts_ms=now_ms())
     archive = EVENTS.parent / 'mission_records' / token
     archive.mkdir(parents=True, exist_ok=True)
     atomic_json(archive / 'request.json', request)

@@ -1,6 +1,7 @@
 #ifndef BALLOON_PHOTO_DETECTOR_H
 #define BALLOON_PHOTO_DETECTOR_H
 
+#include <stddef.h>
 #include <stdbool.h>
 
 #include "dji_typedef.h"
@@ -43,6 +44,12 @@ T_DjiReturnCode BalloonPhotoDetector_StopWithReason(const char *reason);
 /* Return true while the detector worker is active or shutting down. */
 bool BalloonPhotoDetector_IsRunning(void);
 bool BalloonPhotoDetector_IsStopping(void);
+
+/* Last accepted task's initialization failure, retained through cleanup.
+ * Success also represents not attempted or explicitly cancelled initialization. */
+T_DjiReturnCode BalloonPhotoDetector_GetControlInitResult(void);
+/* Persistent localized visual failure; reset only when a new task starts. */
+bool BalloonPhotoDetector_GetVisualFailure(char *message, size_t size);
 
 #ifdef __cplusplus
 }

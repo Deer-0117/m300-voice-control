@@ -1,5 +1,6 @@
 #include "../balloon_widget/balloon_clock.h"
 #include "balloon_mission_gate.h"
+#include "balloon_visual_guard.h"
 #include "balloon_evidence.h"
 #include "balloon_widget/balloon_photo_detector.h"
 
@@ -70,6 +71,12 @@ static volatile bool s_workerActive = false;
 static volatile bool s_stopRequested = false;
 static volatile bool s_controlActive = false;
 static volatile bool s_controlStopRequested = false;
+/* Keep initialization failure separate from teardown: a successful DeInit
+ * must not turn a refused flight task into a normal completion notice. */
+static T_DjiReturnCode s_controlInitResult = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+/* Atomics publish an enduring operator failure independently of SDK cleanup. */
+static unsigned s_visualFailureReason = 0;
+static unsigned s_visualFailureColor = 0;
 static bool s_cameraManagerReady = false;
 static bool s_downloaderRightsHeld = false;
 static T_DjiTaskHandle s_workerTask = NULL;
@@ -101,6 +108,50 @@ typedef struct {
 static bool ReadLatestLiveviewFrame(T_BalloonLiveviewFrame *frame);
 
 static void AppendControlEvent(const char *event, T_DjiReturnCode code, const char *detail);
+
+static void BalloonControl_RecordInitResult(T_DjiReturnCode code, bool cancelled)
+{
+    __atomic_store_n(&s_controlInitResult,
+                     cancelled ? DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS : code,
+                     __ATOMIC_RELEASE);
+}
+
+T_DjiReturnCode BalloonPhotoDetector_GetControlInitResult(void)
+{
+    return __atomic_load_n(&s_controlInitResult, __ATOMIC_ACQUIRE);
+}
+
+static const char *BalloonVisual_ColorText(unsigned color)
+{
+    static const char *names[] = {"目标", "粉色", "红色", "橙色", "黄色", "绿色", "蓝色", "紫色"};
+    return color < sizeof(names) / sizeof(names[0]) ? names[color] : names[0];
+}
+
+static void BalloonVisual_RecordFailure(unsigned reason, const char *color)
+{
+    static const char *colors[] = {"any", "pink", "red", "orange", "yellow", "green", "blue", "purple"};
+    unsigned index = 0;
+    if (color) {
+        for (unsigned i = 1; i < sizeof(colors) / sizeof(colors[0]); ++i)
+            if (!strcmp(color, colors[i])) index = i;
+    }
+    __atomic_store_n(&s_visualFailureColor, index, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_visualFailureReason, reason, __ATOMIC_RELEASE);
+}
+
+bool BalloonPhotoDetector_GetVisualFailure(char *message, size_t size)
+{
+    unsigned reason = __atomic_load_n(&s_visualFailureReason, __ATOMIC_ACQUIRE);
+    unsigned color = __atomic_load_n(&s_visualFailureColor, __ATOMIC_RELAXED);
+    if (!message || !size || !reason) return false;
+    if (reason == 1)
+        snprintf(message, size, "当前画面未识别到%s气球，请对准目标后重新执行", BalloonVisual_ColorText(color));
+    else if (reason == 2)
+        snprintf(message, size, "未收到当前任务的有效相机图像，任务未执行；请检查图传后重试");
+    else
+        snprintf(message, size, "%s气球目标丢失，任务已停止；请对准目标后重新执行", BalloonVisual_ColorText(color));
+    return true;
+}
 
 static bool NaturalLanguageStopRequested(void)
 {
@@ -1052,25 +1103,6 @@ static void SmoothPlanCompletionStop(void)
                        "zero command follows before authority release");
 }
 
-static bool TargetSearchFastPassRequested(void)
-{
-    FILE *fp = fopen(BALLOON_TARGET_SEARCH_REQUEST_FILE, "r");
-    char line[128];
-    int enabled = 0;
-
-    if (fp == NULL) {
-        return false;
-    }
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        if (sscanf(line, "fast_pass=%d", &enabled) == 1) {
-            fclose(fp);
-            return enabled != 0;
-        }
-    }
-    fclose(fp);
-    return false;
-}
-
 static void EnsureDirectories(void)
 {
     int ret = system("mkdir -p /home/uav/offline_balloon_strike_test/captures "
@@ -1704,56 +1736,131 @@ static T_DjiReturnCode LaunchDetection(const char *photoPath, uint32_t seq, uint
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
-static bool ReadLatestTarget(T_BalloonTargetRecord *target)
+typedef struct {
+    T_BalloonVisualContext context;
+    uint64_t lastTargetMonoMs;
+    bool hasContext;
+    bool contextValid;
+} T_BalloonVisualWatch;
+
+static bool BalloonControl_VisualCancelled(const char *missionToken)
 {
-    FILE *fp;
-    int matched;
-    unsigned long long targetTsMs = 0;
-    unsigned long long detectionFinishedTsMs = 0;
-    char clockId[80] = {0};
+    return s_controlStopRequested || NaturalLanguageStopRequested() ||
+        !BalloonMission_Matches(BALLOON_MISSION_TOKEN, missionToken) ||
+        !BalloonMission_Matches(BALLOON_MISSION_COMMIT, missionToken) ||
+        !BalloonMission_Healthy(missionToken);
+}
 
-    if (target == NULL) {
-        return false;
+/* The camera/YOLO workers are already running and do not wait for SDK Init.
+ * This entire preflight path performs no flight-controller or gimbal calls. */
+static bool BalloonControl_WaitForVisual(const char *missionToken, T_BalloonVisualWatch *watch)
+{
+    T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
+    uint64_t began = MonoMs();
+    bool sawFrame = false;
+    char clockId[80];
+    memset(watch, 0, sizeof(*watch));
+    while (!BalloonControl_VisualCancelled(missionToken)) {
+        uint64_t now = NowMs();
+        T_BalloonVisualContext context;
+        T_BalloonVisualReceipt receipt;
+        if (BalloonClock_Id(clockId) && BalloonVisual_ReadContext(missionToken, clockId, now, &context)) {
+            if (!watch->hasContext || !BalloonVisual_SameContext(&context, &watch->context)) sawFrame = false;
+            watch->context = context;
+            watch->hasContext = true;
+            watch->contextValid = true;
+            if (BalloonVisual_ReadReceipt(missionToken, clockId, now, &context, &receipt)) {
+                sawFrame = true;
+                if (receipt.targetFound && !BalloonControl_VisualCancelled(missionToken)) {
+                    uint64_t mono = MonoMs(), age = now - receipt.captureMs;
+                    watch->lastTargetMonoMs = mono >= age ? mono - age : 0;
+                    AppendControlEvent("visual_preflight_target_ready", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, context.color);
+                    return true;
+                }
+            }
+        }
+        if (MonoMs() - began >= BALLOON_VISUAL_PREFLIGHT_MS) {
+            if (BalloonControl_VisualCancelled(missionToken)) return false;
+            BalloonVisual_RecordFailure(sawFrame ? 1 : 2, watch->hasContext ? watch->context.color : NULL);
+            AppendControlEvent(sawFrame ? "visual_preflight_target_missing" : "visual_preflight_image_missing",
+                               DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN,
+                               watch->hasContext ? watch->context.color : "unknown");
+            return false;
+        }
+        if (osal) osal->TaskSleepMs(BALLOON_CONTROL_LOOP_INTERVAL_MS);
+        else return false;
     }
+    return false;
+}
 
-    fp = fopen(BALLOON_LATEST_TARGET_FILE, "r");
-    if (fp == NULL) {
-        return false;
+/* 1: fresh target, 0: bounded target gap, -1: target lost. No SDK calls.
+ * A new action invalidates the previous box before any flight command. */
+static int BalloonControl_ObserveVisual(const char *missionToken, T_BalloonVisualWatch *watch,
+                                       T_BalloonTargetRecord *target, bool *phaseChanged)
+{
+    uint64_t now = NowMs(), mono = MonoMs();
+    char clockId[80];
+    T_BalloonVisualContext context;
+    T_BalloonVisualReceipt receipt;
+    *phaseChanged = false;
+    bool contextValid = BalloonClock_Id(clockId) &&
+        BalloonVisual_ReadContext(missionToken, clockId, now, &context);
+    if (!contextValid && watch->contextValid) {
+        /* Keep the last known action and its deadline through a transient
+         * ACK outage. The same action cannot renew a lost-target watchdog. */
+        watch->contextValid = false;
+        *phaseChanged = true;
     }
+    if (contextValid && (!watch->hasContext || !BalloonVisual_SameContext(&watch->context, &context))) {
+        watch->context = context;
+        watch->hasContext = true;
+        watch->lastTargetMonoMs = mono;
+        *phaseChanged = true;
+    }
+    if (contextValid) watch->contextValid = true;
+    if (contextValid && BalloonVisual_ReadReceipt(missionToken, clockId, now, &context, &receipt) && receipt.targetFound) {
+        uint64_t age = now - receipt.captureMs;
+        watch->lastTargetMonoMs = mono >= age ? mono - age : 0;
+        memset(target, 0, sizeof(*target));
+        target->seq = receipt.seq;
+        target->width = receipt.width; target->height = receipt.height;
+        target->x1 = receipt.x1; target->y1 = receipt.y1;
+        target->x2 = receipt.x2; target->y2 = receipt.y2;
+        target->confidence = receipt.confidence;
+        target->targetTsMs = receipt.captureMs; target->detectionFinishedTsMs = receipt.finishedMs;
+        snprintf(target->source, sizeof(target->source), "mission_bound_%s", receipt.source);
+        return 1;
+    }
+    if (BalloonVisual_TimedOut(mono, watch->lastTargetMonoMs)) {
+        /* A normal completion, uncertain hit, or operator cancellation has
+         * priority over the watchdog's error text. */
+        if (!BalloonControl_VisualCancelled(missionToken))
+            BalloonVisual_RecordFailure(3, watch->hasContext ? watch->context.color : NULL);
+        return -1;
+    }
+    return 0;
+}
 
-    memset(target, 0, sizeof(*target));
-    matched = fscanf(fp,
-                     "%u%f%f%f%f%f%f%llu%llu%f %511[^\t\n] %79s",
-                     &target->seq,
-                     &target->width,
-                     &target->height,
-                     &target->x1,
-                     &target->y1,
-                     &target->x2,
-                     &target->y2,
-                     &targetTsMs,
-                     &detectionFinishedTsMs,
-                     &target->confidence,
-                     target->source, clockId);
-    fclose(fp);
-
-    target->targetTsMs = (uint64_t) targetTsMs;
-    target->detectionFinishedTsMs = (uint64_t) detectionFinishedTsMs;
-
-    return matched == 12 && BalloonClock_Matches(clockId) &&
-           targetTsMs <= detectionFinishedTsMs && detectionFinishedTsMs <= NowMs() &&
-           target->width > 1.0f &&
-           target->height > 1.0f &&
-           target->x2 > target->x1 &&
-           target->y2 > target->y1 &&
-           target->targetTsMs > 0;
+/* Managed RequestSearch clears the controller target, prediction filters,
+ * and moving gimbal state without scanning. Call it only on entry into a
+ * visual gap/action transition: repeated resets would reject delayed frames.
+ * Hover must run every wait tick because deceleration is rate limited. */
+static T_DjiReturnCode BalloonControl_HoldForVisual(uint64_t nowMs, bool clearTarget)
+{
+    if (clearTarget) {
+        T_DjiReturnCode code = DjiTargetChase_RequestSearch(nowMs, false);
+        AppendControlEvent("visual_target_state_cleared", code, "managed_current_view_only");
+        if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) return code;
+    }
+    return DjiTargetChase_Hover(nowMs);
 }
 
 static void *BalloonControlTask(void *arg)
 {
     T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
     T_TargetChaseConfig config = TargetChase_DefaultConfig(5472.0f, 3648.0f, 73.7f, 45.7f);
-    T_DjiReturnCode code;
+    T_DjiReturnCode code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+    T_BalloonVisualWatch visualWatch;
     uint32_t lastObservedSeq = 0;
     uint64_t lastObservedTargetTsMs = 0;
     uint64_t lastAcceptedTargetTsMs = 0;
@@ -1774,6 +1881,7 @@ static void *BalloonControlTask(void *arg)
     bool burstHoverLocked = false;
     bool hoverKeepaliveActive = false;
     bool noFlightMode = false;
+    bool visualHold = false;
     uint64_t lastOperatorStatusMonoMs = 0;
     uint64_t taskStartMs = NowMs();
 
@@ -1927,8 +2035,20 @@ static void *BalloonControlTask(void *arg)
     }
     if (s_controlStopRequested) goto gate_cancelled;
     AppendControlEvent("mission_gate_open", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, missionToken);
+    if (!BalloonControl_WaitForVisual(missionToken, &visualWatch)) goto gate_cancelled;
+    if (BalloonControl_VisualCancelled(missionToken)) goto gate_cancelled;
     code = DjiTargetChase_Init(&config);
+    BalloonControl_RecordInitResult(code, s_controlStopRequested);
     AppendControlEvent("target_chase_init", code, "");
+    if (s_controlStopRequested) {
+        /* Stop may arrive while initialization waits for authority telemetry.
+         * Keep cancellation distinct from an initialization failure and leave
+         * cleanup on this owning control thread, before any ready/trigger. */
+        BalloonControl_RecordInitResult(DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, true);
+        code = DjiTargetChase_DeInit();
+        AppendControlEvent("control_init_cancelled", code, "stop_during_initialization");
+        goto gate_cancelled;
+    }
     if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         BalloonStep_ShowSeq("control init failed", 0, code, "target chase init failed");
         goto gate_cancelled;
@@ -1966,37 +2086,44 @@ static void *BalloonControlTask(void *arg)
             s_stopRequested = true;
             break;
         }
-        if (access(BALLOON_TARGET_SEARCH_REQUEST_FILE, F_OK) == 0) {
-            bool fastSearch = TargetSearchFastPassRequested();
-            code = DjiTargetChase_RequestSearch(nowMs, fastSearch);
-            AppendControlEvent("stage_search_request_consumed",
-                               code,
-                               fastSearch ? "fast_pass" : "full_raster");
-            if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                (void) unlink(BALLOON_TARGET_SEARCH_REQUEST_FILE);
-                memset(&activeTarget, 0, sizeof(activeTarget));
-                memset(&targetFilter, 0, sizeof(targetFilter));
-                hasActiveTarget = false;
-                lastAcceptedTargetTsMs = 0;
-                lastAcceptedYoloControlMs = 0;
-                activeCommandExpireMonoMs = 0;
-                currentTargetTimedOut = true;
-                burstHoverLocked = false;
-                hoverKeepaliveActive = false;
-                hoverStartedMonoMs = 0;
-                firstTargetLoadedMonoMs = 0;
+        /* Managed voice tasks inspect the current view. Search request files
+         * are never permission to pan the gimbal or rotate the aircraft. */
+        (void) unlink(BALLOON_TARGET_SEARCH_REQUEST_FILE);
+        bool phaseChanged = false;
+        int visualResult = BalloonControl_ObserveVisual(missionToken, &visualWatch, &target, &phaseChanged);
+        if (visualResult < 0) {
+            AppendControlEvent("visual_target_lost_stop", DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN,
+                               visualWatch.hasContext ? visualWatch.context.color : "unknown");
+            break;
+        }
+        bool resetVisualTarget = phaseChanged || (visualResult == 0 && !visualHold);
+        if (resetVisualTarget) {
+            visualHold = true;
+            memset(&activeTarget, 0, sizeof(activeTarget));
+            memset(&targetFilter, 0, sizeof(targetFilter));
+            hasActiveTarget = false;
+            lastAcceptedTargetTsMs = 0;
+            lastObservedSeq = 0;
+            lastObservedTargetTsMs = 0;
+            lastAcceptedYoloControlMs = 0;
+            activeCommandExpireMonoMs = 0;
+            currentTargetTimedOut = true;
+            burstHoverLocked = false;
+            hoverKeepaliveActive = false;
+            hoverStartedMonoMs = 0;
+            firstTargetLoadedMonoMs = 0;
+        }
+        if (BalloonControl_VisualCancelled(missionToken)) break;
+        if (visualHold) {
+            code = BalloonControl_HoldForVisual(nowMs, resetVisualTarget);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && code != (T_DjiReturnCode) 0x1B00000000ULL) {
+                AppendControlEvent("visual_wait_hover_failed", code, visualWatch.context.color);
+                break;
             }
         }
+        if (visualResult > 0 && !visualHold) DjiTargetChase_GimbalTick(nowMs);
 
-        DjiTargetChase_GimbalTick(nowMs);
-        code = DjiTargetChase_SearchTick(nowMs);
-        if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-            code != DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE &&
-            code != (T_DjiReturnCode) 0x1B00000000ULL) {
-            AppendControlEvent("body_search_tick_error", code, "");
-        }
-
-        if (ReadLatestTarget(&target)) {
+        if (visualResult > 0) {
             if (target.seq != lastObservedSeq ||
                 target.targetTsMs != lastObservedTargetTsMs) {
                 uint64_t targetAgeMs = nowMs >= target.targetTsMs ? nowMs - target.targetTsMs : UINT64_MAX;
@@ -2080,6 +2207,7 @@ static void *BalloonControlTask(void *arg)
                                                nowMs - target.targetTsMs,
                                                code);
                         }
+                        visualHold = false;
                         activeTarget = target;
                         lastAcceptedTargetTsMs = target.targetTsMs;
                         if (!trackerTarget) {
@@ -2106,6 +2234,13 @@ static void *BalloonControlTask(void *arg)
                     }
                 }
             }
+        }
+
+        if (visualHold) {
+            /* No old command or prediction may be repeated while the newest
+             * frame says the requested balloon is absent. */
+            if (osal) osal->TaskSleepMs(BALLOON_CONTROL_LOOP_INTERVAL_MS);
+            continue;
         }
 
         if (realControlMaxAfterTargetMs > 0 &&
@@ -2299,14 +2434,26 @@ static void *BalloonControlTask(void *arg)
     AppendControlEvent("target_chase_stop_result", code,
                        DjiTargetChase_IsReleasePending() ? "authority_release_pending" : "authority_not_held");
 gate_cancelled:
+    ;
+    char visualMessage[256];
     s_stopRequested = true;
     (void) remove(BALLOON_PREDICTION_RECORD_REQUEST);
     (void) remove(BALLOON_MISSION_COMMIT);
     AppendControlEvent("control_task_stopped", code, "");
-    DjiWidgetFloatingWindow_ShowMessage(DjiTargetChase_IsReleasePending()
-        ? "控制权释放未确认；请用遥控器原生操作接管，按停止测试重试"
-        : s_hitUnconfirmedStop ? "目标消失，结果未确认；等待停止完成后请选择新的测试或API语音任务"
-        : "追击控制线程已停止；等待相机退出并核实飞机状态");
+    if (DjiTargetChase_IsReleasePending()) {
+        DjiWidgetFloatingWindow_ShowMessage("控制权释放未确认；请用遥控器原生操作接管，按停止测试重试");
+    } else if (BalloonPhotoDetector_GetControlInitResult() != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        char message[256];
+        snprintf(message, sizeof(message), "飞控初始化失败（0x%llX），任务未执行；请查看飞控日志",
+                 (unsigned long long) BalloonPhotoDetector_GetControlInitResult());
+        DjiWidgetFloatingWindow_ShowMessage(message);
+    } else if (BalloonPhotoDetector_GetVisualFailure(visualMessage, sizeof(visualMessage))) {
+        DjiWidgetFloatingWindow_ShowMessage(visualMessage);
+    } else {
+        DjiWidgetFloatingWindow_ShowMessage(s_hitUnconfirmedStop
+            ? "目标消失，结果未确认；等待停止完成后请选择新的测试或API语音任务"
+            : "追击控制线程已停止；等待相机退出并核实飞机状态");
+    }
     s_controlActive = false;
     s_controlTask = NULL;
     return NULL;
@@ -2349,10 +2496,12 @@ static T_DjiReturnCode BalloonControl_Start(void)
 static void BalloonControl_Stop(void)
 {
     if (s_controlStopRequested) {
+        DjiTargetChase_RequestStop();
         return;
     }
 
     s_controlStopRequested = true;
+    DjiTargetChase_RequestStop();
     AppendControlEvent("control_stop_requested", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, "");
     /*
      * The control task owns target-chase teardown. Calling Abort here as well
@@ -2638,6 +2787,8 @@ T_DjiReturnCode BalloonPhotoDetector_Start(void)
         return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
     }
 
+    BalloonControl_RecordInitResult(DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, false);
+    BalloonVisual_RecordFailure(0, NULL);
     s_stopRequested = false;
     s_nlStopObserved = false;
     s_hitUnconfirmedStop = false;
