@@ -1,0 +1,2 @@
+# Preserve the original video and telemetry bytes.
+prediction_recordings/** -text
