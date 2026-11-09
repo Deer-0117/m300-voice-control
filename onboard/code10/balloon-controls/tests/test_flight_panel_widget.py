@@ -28,6 +28,7 @@ def function(source, name):
 
 PRELUDE = r'''
 #include <assert.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -41,7 +42,7 @@ typedef int E_DjiWidgetType;
 enum { DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS=0, DJI_ERROR_SYSTEM_MODULE_CODE_BUSY=1,
        DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN=2, DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT=3,
        DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE=4 };
-enum { DJI_WIDGET_TYPE_BUTTON=1, DJI_WIDGET_TYPE_SWITCH=2,
+enum { DJI_WIDGET_TYPE_BUTTON=1, DJI_WIDGET_TYPE_SWITCH=2, DJI_WIDGET_TYPE_LIST=3,
        DJI_WIDGET_BUTTON_STATE_PRESS_DOWN=1, DJI_WIDGET_BUTTON_STATE_RELEASE_UP=0 };
 #define USER_LOG_ERROR(...) ((void)0)
 #define USER_LOG_WARN(...) ((void)0)
@@ -49,6 +50,10 @@ enum { DJI_WIDGET_TYPE_BUTTON=1, DJI_WIDGET_TYPE_SWITCH=2,
 #define BALLOON_TIMING_REQUEST "timing.request"
 #define BALLOON_PREDICTION_RECORD_REQUEST "record.request"
 #define PANEL_MESSAGE "panel.message"
+#define BALLOON_OPTIONS_REQUEST "options.request"
+#define BALLOON_OPTIONS_ACK "options.ack"
+#define BALLOON_OPTIONS_MESSAGE "options.message"
+#define BALLOON_OPTIONS_HELPER "do-not-execute-detector-helper"
 #define PANEL_HELPER "do-not-execute-panel-helper"
 #define BALLOON_VOICE_PYTHON "do-not-execute-python"
 #define API_VOICE_SESSION "voice.session"
@@ -66,9 +71,10 @@ static bool s_newVoicePending, s_newVoicePromptPending, s_apiTestCancelRequested
 static bool s_stopNoticePending, s_isArmed, s_apiTestCleanupFailed, s_recordEnabled, s_displayOnly;
 static unsigned int s_actionEpoch;
 static uint64_t s_sampleConfirmUntil;
-static pid_t s_voicePid, s_missionPid, s_panelPid, s_apiTestPid;
+static pid_t s_voicePid, s_missionPid, s_panelPid, s_apiTestPid, s_optionsPid;
 static char s_voiceSession[96];
 static int s_predictionMode;
+static int32_t s_taskSelection, s_detectorSelection, startup_detector;
 static char s_armedFilePath[256], s_triggerFilePath[256], s_stopFilePath[256];
 static bool running, stopping, timing_requested, release_pending;
 static uint64_t fake_now;
@@ -76,6 +82,7 @@ static int child_result, child_epoch_change, child_calls, thread_calls, fail_thr
 static int timing_ticks, timing_cleanup, stop_calls, network_calls, new_api_calls, mission_calls;
 static int kill_calls, cleared_gate, reset_calls, voice_clears, exposure_calls, startup_fail_stage;
 static int maintenance_calls, maintenance_result, env_failures;
+static bool detector_ack;
 static bool controller_maintenance;
 static char last_mode[32], last_message[1024];
 static void *queued_arg;
@@ -119,9 +126,26 @@ static int fake_remove(const char *path) {
 #define kill fake_kill
 #define remove fake_remove
 static int BalloonPanel_RunChild(char *const argv[],unsigned int epoch,pid_t *owner) {
-    (void)argv; *owner=0; if(epoch!=s_actionEpoch)return -1; child_calls++;
+    *owner=0; if(epoch!=s_actionEpoch)return -1; child_calls++;
+    if (owner == &s_optionsPid) {
+        assert(!strcmp(argv[0],BALLOON_VOICE_PYTHON));
+        assert(!strcmp(argv[2],"--select-detector"));
+        assert(!strcmp(argv[4],"--token") && !strcmp(argv[6],"--owner-pid"));
+        assert(strtol(argv[7],NULL,10)==getpid());
+        if (detector_ack) {
+            FILE *file=fopen(BALLOON_OPTIONS_ACK,"w"); assert(file);
+            fprintf(file,"%s\n",argv[5]); fclose(file);
+        }
+    }
     s_actionEpoch+=(unsigned int)child_epoch_change; return child_result;
 }
+static bool BalloonMission_Matches(const char *path,const char *token) {
+    FILE *file=fopen(path,"r"); if (!file) return false;
+    char data[96]; bool read=fgets(data,sizeof(data),file)!=NULL; fclose(file);
+    if (!read) return false;
+    data[strcspn(data,"\n")]=0; return !strcmp(data,token);
+}
+static int32_t BalloonPanel_ReadDetectorSelection(void) { return startup_detector; }
 static T_DjiReturnCode BalloonWidget_BeginMission(const char *mode) {
     mission_calls++; snprintf(last_mode,sizeof(last_mode),"%s",mode); return 0;
 }
@@ -139,7 +163,7 @@ static T_DjiReturnCode DjiTest_WidgetSpeakerStartService(void) { return startup_
 static T_DjiReturnCode RegisterWidgetUiConfig(const char *p) { (void)p;return startup_fail_stage==3?2:0; }
 static T_DjiReturnCode BalloonWidget_StartVoiceWatch(void) { return startup_fail_stage==5?2:0; }
 static T_DjiReturnCode BalloonPhotoDetector_StartAutoExposure(void) { exposure_calls++;return 0; }
-static T_DjiReturnCode DjiWidget_RegHandlerList(const void *p,size_t n) { (void)p;assert(n==16);return startup_fail_stage==4?2:0; }
+static T_DjiReturnCode DjiWidget_RegHandlerList(const void *p,size_t n) { (void)p;assert(n==26);return startup_fail_stage==4?2:0; }
 static T_DjiReturnCode BalloonWidget_SetValue(E_DjiWidgetType,uint32_t,int32_t,void *);
 static T_DjiReturnCode BalloonWidget_GetValue(E_DjiWidgetType,uint32_t,int32_t *,void *);
 typedef struct { uint32_t index; E_DjiWidgetType type;
@@ -190,8 +214,9 @@ static void reset(void) {
     s_stopNoticePending=s_isArmed=s_apiTestCleanupFailed=s_recordEnabled=s_displayOnly=false;
     running=stopping=timing_requested=release_pending=false;
     s_actionEpoch=1; s_sampleConfirmUntil=0;
-    s_voicePid=s_missionPid=s_panelPid=s_apiTestPid=0;
+    s_voicePid=s_missionPid=s_panelPid=s_apiTestPid=s_optionsPid=0;
     s_voiceSession[0]=0; s_predictionMode=1; fake_now=1000;
+    s_taskSelection=s_detectorSelection=startup_detector=0; detector_ack=false;
     child_result=child_epoch_change=child_calls=thread_calls=fail_thread=0;
     timing_ticks=timing_cleanup=stop_calls=network_calls=new_api_calls=mission_calls=0;
     kill_calls=cleared_gate=reset_calls=voice_clears=exposure_calls=startup_fail_stage=0;
@@ -206,6 +231,7 @@ static void reset(void) {
     setenv("BALLOON_PREDICTION_MODE","1",1);
     unsetenv("BALLOON_PANEL_DISPLAY_ONLY");
     unlink(PANEL_MESSAGE); unlink(BALLOON_TIMING_REQUEST); unlink(BALLOON_PREDICTION_RECORD_REQUEST);
+    unlink(BALLOON_OPTIONS_REQUEST); unlink(BALLOON_OPTIONS_ACK); unlink(BALLOON_OPTIONS_MESSAGE);
 }
 static void finish(void) {
     assert(queued_arg && queued_function);
@@ -219,12 +245,13 @@ static void button(uint32_t index) {
     assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,index,1,NULL)==0);
 }
 static void test_registration_and_dispatch(void) {
-    assert(sizeof(s_widgetHandlerList)/sizeof(s_widgetHandlerList[0])==16);
-    const uint32_t expected[]={50,51,52,53,54,55,56,57,58,60,61,65,66,67,68,69};
-    for(size_t i=0;i<16;i++) {
+    const uint32_t expected[]={50,51,52,53,54,55,56,57,58,60,61,65,66,67,68,69,
+                               81,82,83,84,91,92,93,94,98,99};
+    assert(sizeof(s_widgetHandlerList)/sizeof(s_widgetHandlerList[0])==sizeof(expected)/sizeof(expected[0]));
+    for(size_t i=0;i<sizeof(expected)/sizeof(expected[0]);i++) {
         const T_DjiWidgetHandlerListItem *h=&s_widgetHandlerList[i];
         assert(h->index==expected[i]);
-        assert(h->type==((h->index==54 || h->index==69)?DJI_WIDGET_TYPE_SWITCH:DJI_WIDGET_TYPE_BUTTON));
+        assert(BalloonWidget_ValidControl(h->type,BalloonWidget_ActionIndex(h->index)));
     }
     for(uint32_t i=0;i<50;i++) assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,i,1,NULL)==3);
     assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_BUTTON,59,1,NULL)==3);
@@ -378,15 +405,57 @@ static void test_audit_result_does_not_change_mode(void) {
     assert(strstr(last_message,"部署：一致") && strstr(last_message,"未配置时间标定"));
     assert(s_predictionMode==3 && !s_panelBusy);
 }
+static void test_combined_options_and_detector_transaction(void) {
+    int32_t value=-1;
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,91,1,NULL)==0);
+    assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_LIST,81,&value,NULL)==0 && value==1);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,83,1,NULL)==0);
+    assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_LIST,93,&value,NULL)==0 && value==1);
+    assert(s_predictionMode==0 && !strcmp(getenv("BALLOON_PREDICTION_MODE"),"0"));
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,93,2,NULL)==0);
+    child_result=1; finish(); assert(s_predictionMode==0);
+    child_result=0;
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,83,2,NULL)==0);
+    finish(); assert(s_predictionMode==3);
+    assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_SWITCH,54,&value,NULL)==0 && value==1);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_SWITCH,98,1,NULL)==0 && s_recordEnabled);
+    button(94); assert(!strcmp(last_mode,"pink"));
+    button(99); assert(!strcmp(last_mode,"next"));
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,82,1,NULL)==4);
+    s_displayOnly=controller_maintenance=true;
+    FILE *unrelated=fopen("unrelated","w"); assert(unrelated);
+    fputs("unchanged",unrelated); fclose(unrelated);
+    assert(symlink("unrelated",BALLOON_OPTIONS_REQUEST)==0);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,92,1,NULL)==0 && s_panelBusy);
+    assert(access(BALLOON_OPTIONS_REQUEST,F_OK)==0);
+    unrelated=fopen("unrelated","r"); assert(unrelated);
+    char text[16]; assert(fgets(text,sizeof(text),unrelated)); fclose(unrelated);
+    assert(!strcmp(text,"unchanged")); unlink("unrelated");
+    finish(); assert(s_detectorSelection==0 && access(BALLOON_OPTIONS_REQUEST,F_OK)!=0);
+    detector_ack=true;
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,82,1,NULL)==0);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,81,0,NULL)==1);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_SWITCH,69,0,NULL)==1);
+    button(58); finish();
+    assert(!s_panelBusy && s_detectorSelection==0 && access(BALLOON_OPTIONS_REQUEST,F_OK)!=0);
+    s_apiVoiceResync=s_stopNoticePending=false;
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_LIST,92,1,NULL)==0);
+    finish(); assert(s_detectorSelection==1);
+    assert(BalloonWidget_SetValue(DJI_WIDGET_TYPE_SWITCH,69,0,NULL)==0);
+    assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_LIST,82,&value,NULL)==0 && value==1);
+    assert(BalloonWidget_GetValue(DJI_WIDGET_TYPE_LIST,93,&value,NULL)==0 && value==0);
+}
+
 static void test_startup_resets_stale_mode_and_voice(void) {
     s_predictionMode=3; setenv("BALLOON_PREDICTION_MODE","3",1);
     strcpy(s_voiceSession,"old-session");
     setenv("BALLOON_PANEL_DISPLAY_ONLY","0",1);
     setenv("BALLOON_NO_FLIGHT","0",1);
+    startup_detector=1;
     assert(BalloonWidget_StartService("test-ui",NULL,NULL,NULL)==0);
     assert(s_predictionMode==1 && !strcmp(getenv("BALLOON_PREDICTION_MODE"),"1"));
     assert(!s_voiceSession[0] && s_recordEnabled && voice_clears==1 && cleared_gate==1);
-    assert(s_displayOnly && controller_maintenance && maintenance_calls==1 && !exposure_calls);
+    assert(s_displayOnly && controller_maintenance && maintenance_calls==1 && !exposure_calls && s_detectorSelection==1);
 }
 static void test_display_only_resources_are_closed(void) {
     setenv("BALLOON_PANEL_DISPLAY_ONLY","1",1);
@@ -503,6 +572,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"cancel"))test_stop_invalidates_pending_success_and_sample();
     else if(!strcmp(argv[1],"audit"))test_audit_result_does_not_change_mode();
     else if(!strcmp(argv[1],"startup"))test_startup_resets_stale_mode_and_voice();
+    else if(!strcmp(argv[1],"options"))test_combined_options_and_detector_transaction();
     else if(!strcmp(argv[1],"display"))test_display_only_resources_are_closed();
     else if(!strcmp(argv[1],"startup_failure"))test_startup_failure_is_not_reported_as_ready();
     else if(!strcmp(argv[1],"maintenance"))test_maintenance_transitions();
@@ -525,17 +595,22 @@ class ActualPanelC(unittest.TestCase):
         macros = '\n'.join(re.findall(r'^#define BALLOON_WIDGET_\w+\s+\d+\s*$', widget, re.MULTILINE))
         registration = re.search(r'static const T_DjiWidgetHandlerListItem s_widgetHandlerList\[\] = \{.*?\n\};',
                                  widget, re.DOTALL).group(0)
+        options = re.search(r'typedef struct \{[^}]+\} T_BalloonDetectorSelection;', panel).group(0)
         functions = [function(widget, 'BalloonWidget_ActionIndex'), function(widget, 'BalloonWidget_HelperBusy'), function(panel, 'BalloonPanel_ClearVoice'),
                      function(widget, 'BalloonWidget_ResetVoiceBaseline'), function(panel, 'BalloonPanel_NewVoiceSession'),
                      function(panel, 'BalloonPanel_Idle'), function(panel, 'BalloonPanel_BeginVoiceInput'),
                      function(widget, 'BalloonWidget_PollVoicePcm'), function(panel, 'BalloonPanel_Task'),
                      function(panel, 'BalloonPanel_RetryRelease'),
-                     function(panel, 'BalloonPanel_StartTool'), function(widget, 'BalloonWidget_TimingStep'),
+                     function(panel, 'BalloonPanel_StartTool'), function(panel, 'BalloonPanel_SetPrediction'),
+                     function(panel, 'BalloonPanel_DetectorName'), function(panel, 'BalloonPanel_WriteOptionsLease'),
+                     function(panel, 'BalloonPanel_RunDetectorHelper'), function(panel, 'BalloonPanel_ShowDetectorMessage'),
+                     function(panel, 'BalloonPanel_DetectorTask'), function(panel, 'BalloonPanel_SelectDetector'),
+                     function(widget, 'BalloonWidget_TimingStep'),
                      function(widget, 'BalloonWidget_Stop'), function(widget, 'BalloonWidget_SetMaintenance'),
-                     function(widget, 'BalloonWidget_ModeText'), function(widget, 'BalloonWidget_SetValue'),
+                     function(widget, 'BalloonWidget_ModeText'), function(widget, 'BalloonWidget_ValidControl'), function(widget, 'BalloonWidget_SetValue'),
                      function(widget, 'BalloonWidget_GetValue'), function(widget, 'BalloonWidget_StartService')]
         source = cls.folder / 'panel_test.c'
-        source.write_text(PRELUDE + VOICE_ENTRY_PRELUDE + '\n' + macros + '\n' + registration + '\n' + '\n'.join(functions) + EPILOGUE)
+        source.write_text(PRELUDE + VOICE_ENTRY_PRELUDE + '\n' + macros + '\n' + registration + '\n' + options + '\n' + '\n'.join(functions) + EPILOGUE)
         cls.binary = cls.folder / 'panel-test'
         command = shlex.split(os.environ.get('CC', 'cc')) + ['-std=gnu11', '-pthread', '-Wno-unused-function',
                    str(source), '-o', str(cls.binary)]
@@ -544,14 +619,14 @@ class ActualPanelC(unittest.TestCase):
             raise AssertionError(built.stderr)
 
     def test_real_widget_and_panel_state_transitions(self):
-        for case in ('dispatch', 'voice_input', 'voice_busy', 'voice_pcm', 'sample', 'spawn_failure', 'timing', 'kalman', 'cancel', 'audit', 'startup', 'display', 'startup_failure', 'maintenance', 'maintenance_busy', 'maintenance_failure'):
+        for case in ('dispatch', 'voice_input', 'voice_busy', 'voice_pcm', 'sample', 'spawn_failure', 'timing', 'kalman', 'cancel', 'audit', 'startup', 'options', 'display', 'startup_failure', 'maintenance', 'maintenance_busy', 'maintenance_failure'):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.binary), case], cwd=self.folder, timeout=5,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
 
-    def test_actual_mission_gate_rejects_any_and_missing_voice_candidate(self):
+    def test_actual_mission_gate_rejects_pixel_pink_and_missing_voice_candidate(self):
         # Reuse the existing mission harness: every post-gate side effect
         # asserts if reached. Only the real BeginMission guard is exercised.
         import test_display_mode as display
@@ -565,10 +640,12 @@ class ActualPanelC(unittest.TestCase):
         widget = (WIDGET / 'psdk_balloon_widget.c').read_text()
         source = self.folder / 'voice-confirm-gate.c'
         source.write_text(prelude + extra + function(widget, 'BalloonWidget_HelperBusy') +
+                          function((WIDGET / 'balloon_flight_panel.h').read_text(), 'BalloonPanel_Idle') +
                           function(widget, 'BalloonWidget_BeginMission') + r"""
 int main(void) {
     s_displayOnly=false;
-    assert(BalloonWidget_BeginMission("any")==DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE);
+    s_detectorSelection=1;
+    assert(BalloonWidget_BeginMission("pink")==DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE);
     assert(BalloonWidget_BeginMission("voice")==DJI_ERROR_SYSTEM_MODULE_CODE_BUSY);
     assert(BalloonWidget_BeginMission("api_new")==DJI_ERROR_SYSTEM_MODULE_CODE_BUSY);
     gate_ready=true; s_newVoicePending=true;

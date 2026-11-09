@@ -2,6 +2,7 @@
 #define DJI_TARGET_CHASE_TASK_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "dji_typedef.h"
@@ -92,6 +93,8 @@ bool DjiTargetChase_IsManualTriggerEnabled(void);
  */
 T_DjiReturnCode DjiTargetChase_RunOnce(uint64_t now_ms);
 bool DjiTargetChase_IsNoFlightMode(void);
+/* Read the most recent effective prediction and fallback, if still fresh. */
+bool DjiTargetChase_PredictionStatus(char *out, size_t cap);
 bool DjiTargetChase_HasRepeatableCommand(void);
 bool DjiTargetChase_GetLastCommand(T_TargetChaseCommand *command);
 

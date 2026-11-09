@@ -19,6 +19,7 @@ PRELUDE = r'''
 #include <string.h>
 typedef uint64_t T_DjiReturnCode;
 typedef void *T_DjiTaskHandle;
+#define BALLOON_NL_STOP_FILE "stop.request"
 #define DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS 0
 #define DJI_ERROR_SYSTEM_MODULE_CODE_BUSY 0x102
 #define DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN 0xFF

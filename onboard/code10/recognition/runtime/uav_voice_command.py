@@ -20,7 +20,7 @@ import urllib.request
 import uuid
 import wave
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from balloon_clock import clock_id, now_ms
 from uav_capabilities import CapabilityError, validate_actions
@@ -402,7 +402,8 @@ def _remove_own_plan(plan_id: str) -> None:
 
 
 def confirm(session: str | None = None, mission_token: str | None = None,
-            allow_deferred: bool = False) -> dict[str, Any]:
+            allow_deferred: bool = False, *,
+            validate_plan_actions: Callable[[list[dict[str, Any]]], None] | None = None) -> dict[str, Any]:
     with voice_lock():
         state, candidate = _candidate_locked(session, allow_deferred)
         _mission_valid(mission_token)
@@ -426,6 +427,16 @@ def confirm(session: str | None = None, mission_token: str | None = None,
             if (re.fullmatch(r"[0-9a-f]{32}", str(candidate.get("proposal_id", ""))) is None or
                     any(action["capability"] != "strike_balloon" for action in actions)):
                 raise VoiceError("API候选身份或动作无效")
+            if validate_plan_actions is not None:
+                try:
+                    validate_plan_actions(actions)
+                except ValueError:
+                    _mission_valid(mission_token)
+                    atomic_json(CANDIDATE_FILE, candidate)
+                    state.update(status="ready", operation=None)
+                    atomic_json(SESSION_STATE, state)
+                    atomic_text(READY_FILE, session + "\n")
+                    raise
             # This is the sole submission path. No remote /submit is called;
             # only locally validated API actions enter the existing plan gate.
             plan = store_plan(actions, "api_voice_confirmed", candidate["transcript"])

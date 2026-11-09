@@ -297,9 +297,10 @@ typedef struct {
     uint64_t targetTsMs;
 } T_BalloonTargetFilter;
 
-static const char *BalloonTargetSourceText(uint32_t seq)
+static const char *BalloonTargetSourceText(const T_BalloonTargetRecord *target)
 {
-    return (seq & BALLOON_TRACKER_SEQ_FLAG) != 0U ? "MIL" : "YOLO";
+    if ((target->seq & BALLOON_TRACKER_SEQ_FLAG) != 0U) return "MIL";
+    return strcmp(target->source, "mission_bound_pixel") == 0 ? "PIXEL" : "YOLO";
 }
 
 static float BalloonClampFloat(float value, float minimum, float maximum)
@@ -449,7 +450,8 @@ static void BalloonShowOperatorStatus(bool noFlightMode,
                                       bool targetLost,
                                       const T_BalloonTargetRecord *target,
                                       uint64_t nowMs,
-                                      uint64_t taskStartMs)
+                                      uint64_t taskStartMs,
+                                      int predictionMode)
 {
     T_TargetChaseCommand command;
     T_BalloonLiveviewFrame liveviewFrame;
@@ -481,7 +483,7 @@ static void BalloonShowOperatorStatus(bool noFlightMode,
         snprintf(message, sizeof(message),
                  "STATE=%s | TARGET=YES | src=%s | %s=%s | pos=%s age=%llums | gimbal=%s",
                  approaching ? "APPROACHING" : "TARGET_FOUND",
-                 BalloonTargetSourceText(target->seq),
+                 BalloonTargetSourceText(target),
                  noFlightMode ? "PLAN" : "ACTION",
                  action,
                  direction,
@@ -509,7 +511,16 @@ static void BalloonShowOperatorStatus(bool noFlightMode,
         (void) fread(missionStatus, 1, sizeof(missionStatus) - 1, statusFile);
         fclose(statusFile);
     }
-    snprintf(combined, sizeof(combined), "%s\n%s", missionStatus, message);
+    if (hasActiveTarget && target != NULL && !targetLost && decoderHealthy && !noFlightMode) {
+        char prediction[192] = {0};
+        (void) DjiTargetChase_PredictionStatus(prediction, sizeof(prediction));
+        snprintf(combined, sizeof(combined), "预测选择：%s；%s\n%s\n%s",
+                 predictionMode == 3 ? "补偿＋延迟卡尔曼" :
+                 predictionMode == 0 ? "运动补偿" : "原版像素",
+                 prediction, missionStatus, message);
+    } else {
+        snprintf(combined, sizeof(combined), "%s\n%s", missionStatus, message);
+    }
     if (strlen(combined) > DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN) {
         size_t length = DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN;
         while (length > 0 && ((unsigned char) combined[length] & 0xC0) == 0x80) --length;
@@ -2181,12 +2192,12 @@ static void *BalloonControlTask(void *arg)
                         char detail[128];
                         snprintf(detail, sizeof(detail),
                                  "%s target loaded; conf=%.3f age_ms=%llu",
-                                 BalloonTargetSourceText(target.seq),
+                                 BalloonTargetSourceText(&target),
                                  target.confidence,
                                  (unsigned long long) targetAgeMs);
-                        BalloonStep_ShowSeq(BalloonTargetSourceText(target.seq), target.seq, code, detail);
+                        BalloonStep_ShowSeq(BalloonTargetSourceText(&target), target.seq, code, detail);
                     } else {
-                        BalloonStep_ShowSeq("YOLO target failed", target.seq, code, "target box rejected");
+                        BalloonStep_ShowSeq("Detection target failed", target.seq, code, "target box rejected");
                     }
                     if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
                         code = DjiTargetChase_SetManualTrigger(true, nowMs);
@@ -2421,7 +2432,8 @@ static void *BalloonControlTask(void *arg)
                                       currentTargetTimedOut || hoverKeepaliveActive,
                                       lastAcceptedTargetTsMs == 0 ? NULL : &activeTarget,
                                       nowMs,
-                                      taskStartMs);
+                                      taskStartMs,
+                                      config.prediction_mode);
             lastOperatorStatusMonoMs = nowMonoMs;
         }
 

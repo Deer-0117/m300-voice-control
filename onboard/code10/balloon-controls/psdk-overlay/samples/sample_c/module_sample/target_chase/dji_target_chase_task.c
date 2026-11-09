@@ -20,6 +20,7 @@
 #include "dji_gimbal_manager.h"
 #include "dji_platform.h"
 #include "utils/cJSON.h"
+#include "../balloon_widget/balloon_background_telemetry_impl.h"
 
 #define DJI_TARGET_CHASE_RAD_TO_DEG 57.29577951308232f
 #define DJI_TARGET_CHASE_DEG_TO_RAD 0.017453292519943295769f
@@ -127,6 +128,21 @@ typedef enum {
 } E_DjiTargetChaseSearchPhase;
 
 static T_TargetChaseController s_chase;
+/* One atomic word keeps provider, reason, dry-run flag and timestamp coherent
+ * for the UI thread. 48-bit milliseconds wraps only after thousands of years;
+ * masked subtraction handles the wrap without sharing non-atomic state. */
+static uint64_t s_prediction_status_snapshot;
+#define DJI_TARGET_CHASE_STATUS_TIME_MASK UINT64_C(0xFFFFFFFFFFFF)
+enum {
+    PREDICTION_STATUS_PIXEL = 1, PREDICTION_STATUS_WORLD,
+    PREDICTION_STATUS_KF, PREDICTION_STATUS_HYBRID, PREDICTION_STATUS_GROUND,
+    PREDICTION_STATUS_WORLD_MISSING = 32, PREDICTION_STATUS_BLEND_ZERO
+};
+
+static void DjiTargetChase_ClearPredictionStatus(void)
+{
+    __atomic_store_n(&s_prediction_status_snapshot, UINT64_C(0), __ATOMIC_RELEASE);
+}
 #define DJI_TARGET_CHASE_POSE_HISTORY_COUNT 96U
 #define DJI_TARGET_CHASE_POSE_MAX_GAP_MS 100ULL
 #define DJI_TARGET_CHASE_POSE_NEAREST_MAX_MS 25ULL
@@ -196,6 +212,7 @@ void DjiTargetChase_RequestStop(void)
     /* Called synchronously by the operator-stop path, including while an
      * SDK request is waiting for control-device confirmation. */
     __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+    DjiTargetChase_ClearPredictionStatus();
 }
 
 bool DjiTargetChase_IsControlInhibited(void)
@@ -1018,11 +1035,92 @@ static void DjiTargetChase_ProfileFlush(bool force)
     s_profile_previous_flush_ns = end_ns >= flush_begin_ns ? end_ns - flush_begin_ns : 0;
 }
 
+static void DjiTargetChase_PublishPredictionStatus(uint64_t now_ms, bool step_ok,
+                                                 const T_TargetChaseCommand *command)
+{
+    unsigned int provider = PREDICTION_STATUS_PIXEL, reason = 0;
+    uint64_t packed;
+    /* ACTIVE is assigned only after the core passed target freshness,
+     * authority, trigger and geometry checks and calculated the command. */
+    if (!step_ok || !command || !command->should_send ||
+        __atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE) || s_chase.mode != TARGET_CHASE_MODE_ACTIVE) {
+        DjiTargetChase_ClearPredictionStatus();
+        return;
+    }
+    if (s_chase.config.geometry == TARGET_CHASE_GEOMETRY_GROUND_NADIR) {
+        provider = PREDICTION_STATUS_GROUND;
+    } else if (s_chase.config.prediction_mode == 3) {
+        provider = s_chase.kf_active ? PREDICTION_STATUS_KF : PREDICTION_STATUS_PIXEL;
+        reason = (unsigned int)s_chase.kf_reason;
+    } else if (s_chase.config.prediction_mode == 0) {
+        /* These are exactly the remaining PredictWorld admission checks after
+         * Step has established a fresh target. No second prediction is run. */
+        if (s_chase.motion_world_valid && s_chase.motion_estimate_initialized &&
+            s_chase.motion_estimate_timestamp_ms == s_chase.target.timestamp_ms)
+            provider = PREDICTION_STATUS_WORLD;
+        else
+            reason = PREDICTION_STATUS_WORLD_MISSING;
+    } else if (s_chase.config.prediction_mode == 2) {
+        if (s_chase.hybrid_weight > 0.0f) provider = PREDICTION_STATUS_HYBRID;
+        else reason = PREDICTION_STATUS_BLEND_ZERO;
+    }
+    packed = ((now_ms & DJI_TARGET_CHASE_STATUS_TIME_MASK) << 16) |
+             (s_no_flight_mode ? UINT64_C(0x8000) : 0) |
+             ((uint64_t)(reason & 0x7fU) << 8) | provider;
+    __atomic_store_n(&s_prediction_status_snapshot, packed, __ATOMIC_RELEASE);
+}
+
+bool DjiTargetChase_PredictionStatus(char *out, size_t cap)
+{
+    const uint64_t packed = __atomic_load_n(&s_prediction_status_snapshot, __ATOMIC_ACQUIRE);
+    const char *mode = "像素预测", *reason = "";
+    const unsigned int provider = (unsigned int)(packed & 0xffU);
+    const unsigned int code = (unsigned int)((packed >> 8) & 0x7fU);
+    uint64_t age;
+    if (!out || cap == 0) return false;
+    if (!packed || __atomic_load_n(&s_control_inhibited, __ATOMIC_ACQUIRE)) {
+        snprintf(out, cap, "等待新的预测控制结果");
+        return false;
+    }
+    age = (DjiTargetChase_NowMs() - (packed >> 16)) & DJI_TARGET_CHASE_STATUS_TIME_MASK;
+    if (age > 2000ULL) {
+        snprintf(out, cap, "预测状态已过期，等待控制更新");
+        return false;
+    }
+    switch (provider) {
+    case PREDICTION_STATUS_WORLD: mode = "角速度补偿"; break;
+    case PREDICTION_STATUS_KF: mode = "延迟卡尔曼"; break;
+    case PREDICTION_STATUS_HYBRID: mode = "像素与角速度混合"; break;
+    case PREDICTION_STATUS_GROUND: mode = "像素地面投影"; break;
+    default: break;
+    }
+    if (provider == PREDICTION_STATUS_PIXEL) {
+        switch (code) {
+        case TARGET_KF_NO_CALIBRATION: reason = "；KF回退：缺有效时间校准"; break;
+        case TARGET_KF_NO_POSE: reason = "；KF回退：缺对应时刻姿态"; break;
+        case TARGET_KF_WARMUP: reason = "；KF回退：有效样本不足"; break;
+        case TARGET_KF_REJECTED: reason = "；KF回退：观测被拒绝"; break;
+        case TARGET_KF_STALE: reason = "；KF回退：滤波观测过期"; break;
+        case TARGET_KF_UNCERTAIN: reason = "；KF回退：预测不稳定"; break;
+        case TARGET_KF_RESET: reason = "；KF回退：等待重新建轨"; break;
+        case PREDICTION_STATUS_WORLD_MISSING: reason = "；补偿回退：缺匹配姿态或角度轨迹"; break;
+        case PREDICTION_STATUS_BLEND_ZERO: reason = "；角度分量当前未采用"; break;
+        default: break;
+        }
+    } else if (provider == PREDICTION_STATUS_KF && code == TARGET_KF_REJECTED) {
+        reason = "；当前观测被拒，沿用有效滤波状态";
+    }
+    snprintf(out, cap, "实际计算：%s%s%s", mode, reason,
+             (packed & UINT64_C(0x8000)) ? "；禁飞，仅计算" : "");
+    return true;
+}
+
 static bool DjiTargetChase_ProfileStep(uint64_t now_ms, T_TargetChaseCommand *command)
 {
     uint64_t begin = DjiTargetChase_ProfileBegin();
     bool result = TargetChase_Step(&s_chase, now_ms, command);
     DjiTargetChase_ProfileEnd(PROFILE_STEP, begin, result);
+    DjiTargetChase_PublishPredictionStatus(DjiTargetChase_NowMs(), result, command);
     return result;
 }
 
@@ -1305,7 +1403,7 @@ static void DjiTargetChase_ControlDeviceStop(void)
     bool subscribed = s_control_device.subscribed;
     s_control_device.enabled = false;
     pthread_mutex_unlock(&s_control_device_mutex);
-    if (subscribed) (void)DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
+    if (subscribed) (void)BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
     pthread_mutex_lock(&s_control_device_mutex);
     memset(&s_control_device, 0, sizeof(s_control_device));
     pthread_mutex_unlock(&s_control_device_mutex);
@@ -1326,7 +1424,7 @@ static T_DjiReturnCode DjiTargetChase_ControlDeviceStart(void)
     memset(&s_control_device, 0, sizeof(s_control_device));
     s_control_device.enabled = true;
     pthread_mutex_unlock(&s_control_device_mutex);
-    code = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
+    code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, DjiTargetChase_ControlDeviceCallback);
     if (!DjiTargetChase_IsSuccess(code)) {
         DjiTargetChase_ControlDeviceStop();
@@ -2495,7 +2593,7 @@ static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
         return;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
         NULL);
@@ -2518,7 +2616,7 @@ static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
                                       NULL,
                                       0.0f,
                                       0.0f);
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+        (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
         s_gimbal_angles_subscribed = false;
         return;
     }
@@ -2536,7 +2634,7 @@ static void DjiTargetChase_InitGimbalTracking(uint64_t now_ms)
                                       0.0f,
                                       0.0f);
             (void) DjiGimbalManager_Deinit();
-            (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+            (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
             s_gimbal_manager_initialized = false;
             s_gimbal_angles_subscribed = false;
             return;
@@ -2607,7 +2705,7 @@ static void DjiTargetChase_DeInitGimbalTracking(uint64_t now_ms)
         (void) DjiGimbalManager_Deinit();
     }
     if (s_gimbal_angles_subscribed) {
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+        (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
     }
 
     s_gimbal_tracking_enabled = false;
@@ -3101,7 +3199,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
 {
     T_DjiReturnCode return_code;
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_HOME_POINT_SET_STATUS,
         DJI_DATA_SUBSCRIPTION_TOPIC_1_HZ,
         NULL);
@@ -3109,7 +3207,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
         NULL);
@@ -3117,7 +3215,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT,
         DJI_DATA_SUBSCRIPTION_TOPIC_1_HZ,
         NULL);
@@ -3125,7 +3223,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
         NULL);
@@ -3133,7 +3231,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
         NULL);
@@ -3141,7 +3239,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED,
         DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
         NULL);
@@ -3149,7 +3247,7 @@ static T_DjiReturnCode DjiTargetChase_SubscribeTopics(void)
         return return_code;
     }
 
-    return_code = DjiFcSubscription_SubscribeTopic(
+    return_code = BalloonSubscription_Acquire(BALLOON_SUB_CHASE,
         DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT,
         DJI_DATA_SUBSCRIPTION_TOPIC_10_HZ,
         NULL);
@@ -3183,6 +3281,7 @@ T_DjiReturnCode DjiTargetChase_Init(const T_TargetChaseConfig *config)
     __atomic_store_n(&s_intentional_release, false, __ATOMIC_RELEASE);
     __atomic_store_n(&s_last_stop_result, DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, __ATOMIC_RELEASE);
 
+    DjiTargetChase_ClearPredictionStatus();
     s_last_now_ms = DjiTargetChase_NowMs();
     s_no_flight_mode = DjiTargetChase_RequestedNoFlight();
     __atomic_store_n(&s_real_authority_obtained, false, __ATOMIC_RELEASE);
@@ -3216,7 +3315,7 @@ T_DjiReturnCode DjiTargetChase_Init(const T_TargetChaseConfig *config)
     }
     DjiTargetChase_LogEvent("flight_controller_initialized", s_last_now_ms, return_code, NULL);
 
-    return_code = DjiFcSubscription_Init();
+    return_code = BalloonSubscription_Init();
     if (!DjiTargetChase_IsSuccess(return_code)) {
         DjiTargetChase_LogEvent("fc_subscription_init_failed", s_last_now_ms, return_code, NULL);
         return return_code;
@@ -3303,14 +3402,13 @@ T_DjiReturnCode DjiTargetChase_DeInit(void)
     DjiTargetChase_DeInitGimbalTracking(s_last_now_ms);
     if (DjiTargetChase_IsReleasePending()) return abort_code;
     DjiTargetChase_ControlDeviceStop();
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_HOME_POINT_SET_STATUS);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
-    (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
-    (void) DjiFcSubscription_DeInit();
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_HOME_POINT_SET_STATUS);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
+    (void) BalloonSubscription_Release(BALLOON_SUB_CHASE, DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
     return_code = DjiFlightController_DeInit();
     DjiTargetChase_LogEvent("flight_controller_deinit", s_last_now_ms, return_code, NULL);
     DjiTargetChase_ProfileFlush(true);
@@ -3444,6 +3542,7 @@ T_DjiReturnCode DjiTargetChase_SetManualTrigger(bool enabled, uint64_t now_ms)
 
     s_last_now_ms = now_ms;
     TargetChase_SetManualTrigger(&s_chase, enabled, now_ms);
+    if (!enabled) DjiTargetChase_ClearPredictionStatus();
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
@@ -3856,6 +3955,7 @@ T_DjiReturnCode DjiTargetChase_RequestSearch(uint64_t now_ms,
     }
 
     s_last_now_ms = now_ms;
+    DjiTargetChase_ClearPredictionStatus();
     TargetChase_ClearTarget(&s_chase);
     s_chase.kf_epoch_ms = DjiTargetChase_NowMs();
     s_raw_frame_ms = 0;
@@ -3973,6 +4073,7 @@ T_DjiReturnCode DjiTargetChase_Hover(uint64_t now_ms)
         return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
     }
 
+    DjiTargetChase_ClearPredictionStatus();
     s_last_now_ms = now_ms;
     memset(&command, 0, sizeof(command));
     command.should_send = true;
@@ -4100,6 +4201,7 @@ T_DjiReturnCode DjiTargetChase_Abort(void)
     T_DjiReturnCode zero_code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
     T_DjiReturnCode release_code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
     __atomic_store_n(&s_control_inhibited, true, __ATOMIC_RELEASE);
+    DjiTargetChase_ClearPredictionStatus();
     TargetChase_ClearTarget(&s_chase);
     TargetChase_SetManualTrigger(&s_chase, false, s_last_now_ms);
     s_chase.kf_epoch_ms = DjiTargetChase_NowMs();

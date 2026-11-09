@@ -28,30 +28,39 @@ static void test_log(const char *message, ...) { (void)message; }
 
 static T_DjiDataTimestamp next_stamp;
 static T_DjiFcSubscriptionGimbalAngles next_angles;
-static unsigned int reads, subscribes, unsubscribes;
-static bool subscribed, untouched;
+static unsigned int reads, subscribes, releases;
+static bool timing_owner, external_owner, untouched;
 static T_DjiReturnCode subscribe_error;
 
 T_DjiReturnCode BalloonPhotoDetector_StartCalibrationLiveview(void) { return 0; }
 T_DjiReturnCode BalloonPhotoDetector_StopCalibrationLiveview(void) { return 0; }
-T_DjiReturnCode DjiFcSubscription_Init(void) { return 0; }
-T_DjiReturnCode DjiFcSubscription_SubscribeTopic(E_DjiFcSubscriptionTopic topic,
-    E_DjiDataSubscriptionTopicFreq frequency, DjiReceiveDataOfTopicCallback callback)
+T_DjiReturnCode BalloonSubscription_Acquire(E_BalloonSubscriptionOwner owner,
+    E_DjiFcSubscriptionTopic topic, E_DjiDataSubscriptionTopicFreq frequency,
+    DjiReceiveDataOfTopicCallback callback)
 {
-    (void)topic; (void)frequency; (void)callback; ++subscribes;
+    assert(owner == BALLOON_SUB_TIMING && topic == DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+    assert(frequency == DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ && !callback);
+    ++subscribes;
     if (subscribe_error) return subscribe_error;
-    if (subscribed) return DJI_ERROR_SUBSCRIPTION_MODULE_CODE_TOPIC_DUPLICATE;
-    subscribed = true;
+    timing_owner = true;
     return 0;
 }
-T_DjiReturnCode DjiFcSubscription_UnSubscribeTopic(E_DjiFcSubscriptionTopic topic)
+T_DjiReturnCode BalloonSubscription_Release(E_BalloonSubscriptionOwner owner,
+    E_DjiFcSubscriptionTopic topic)
 {
-    (void)topic; ++unsubscribes; subscribed = false; return 0;
+    assert(owner == BALLOON_SUB_TIMING && topic == DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+    ++releases;
+    timing_owner = false;
+    return 0;
+}
+void BalloonSubscription_ForgetMissing(E_DjiFcSubscriptionTopic topic)
+{
+    assert(topic == DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
 }
 T_DjiReturnCode DjiFcSubscription_GetLatestValueOfTopic(E_DjiFcSubscriptionTopic topic,
     uint8_t *data, uint16_t size, T_DjiDataTimestamp *stamp)
 {
-    assert(subscribed && topic == DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+    assert(timing_owner && topic == DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
     assert(size == sizeof(next_angles));
     ++reads;
     if (!untouched) memcpy(data, &next_angles, sizeof(next_angles));
@@ -94,7 +103,7 @@ static void end(void)
 {
     remove_fixture(BALLOON_TIMING_REQUEST);
     BalloonTiming_Tick(false);
-    assert(!s_timingOwnSubscription && !s_timingSubscriptionReady);
+    assert(!s_timingOwnSubscription && !timing_owner);
 }
 int main(int argc, char **argv)
 {
@@ -133,14 +142,14 @@ int main(int argc, char **argv)
     stamp(1100, 1100000); BalloonTiming_Tick(false); assert(rows() == 1); end();
     puts("PASS: nonfinite/absurd/untouched SDK angles rejected before baseline");
 
-    int before = rows(); unsigned int before_unsubscribe = unsubscribes;
-    subscribed = true; stamp(2000, 2000000); begin();
-    assert(s_timingSubscriptionReady && !s_timingOwnSubscription && rows() == before);
+    int before = rows(); unsigned int before_release = releases;
+    external_owner = true; stamp(2000, 2000000); begin();
+    assert(s_timingOwnSubscription && timing_owner && rows() == before);
     stamp(2100, 2100000); BalloonTiming_Tick(false); assert(rows() == before + 1);
-    end(); assert(subscribed && unsubscribes == before_unsubscribe); subscribed = false;
+    end(); assert(external_owner && releases == before_release + 1);
     unsigned int before_read = reads;
     subscribe_error = DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN; begin();
-    assert(!s_timingSubscriptionReady && reads == before_read); end();
+    assert(!s_timingOwnSubscription && reads == before_read); end();
     assert(subscribes > 0);
     puts("PASS: borrowed subscription warms up and failed subscribe never reads SDK");
     return 0;

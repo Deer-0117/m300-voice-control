@@ -2,7 +2,7 @@
 #define BALLOON_TIMING_CAPTURE_H
 
 /* Single watcher owns SDK calls. Never call under Widget's action mutex. */
-#include "dji_fc_subscription.h"
+#include "balloon_background_telemetry.h"
 #include "balloon_clock.h"
 #include "balloon_photo_detector.h"
 #include <unistd.h>
@@ -13,9 +13,6 @@
 
 static bool s_timingOwnSubscription = false;
 static bool s_timingOwnLiveview = false;
-/* Ready also covers an explicitly confirmed external subscription. Reading
- * SUCCESS alone is not evidence of a subscription in this capture session. */
-static bool s_timingSubscriptionReady = false;
 
 static void BalloonTiming_PoseProblem(uint64_t now, const char *reason, T_DjiReturnCode code)
 {
@@ -60,15 +57,11 @@ static void BalloonTiming_Tick(bool busy)
             if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) s_timingOwnLiveview = false;
         }
         if (s_timingOwnSubscription) {
-            code = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
-            if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) s_timingOwnSubscription = false;
-            else BalloonTiming_PoseProblem(now, "unsubscribe failed; ownership retained", code);
+            (void) BalloonSubscription_Release(BALLOON_SUB_TIMING, DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+            s_timingOwnSubscription = false;
         }
-        if (!s_timingOwnSubscription) {
-            s_timingSubscriptionReady = false;
-            haveStamp = false;
-            lastAttempt = 0;
-        }
+        haveStamp = false;
+        lastAttempt = 0;
         return;
     }
     if (!s_timingOwnLiveview && (lastStreamAttempt == 0 || now >= lastStreamAttempt + 1000)) {
@@ -76,21 +69,15 @@ static void BalloonTiming_Tick(bool busy)
         code = BalloonPhotoDetector_StartCalibrationLiveview();
         s_timingOwnLiveview = code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
     }
-    if (!s_timingSubscriptionReady) {
+    if (!s_timingOwnSubscription) {
         if (lastAttempt != 0 && now >= lastAttempt && now - lastAttempt < 1000) return;
         lastAttempt = now;
-        /* Init may already be active; Subscribe's explicit result decides
-         * ownership. Never deinitialize this shared SDK module. */
-        T_DjiReturnCode initCode = DjiFcSubscription_Init();
-        code = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES,
-                                              DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+        code = BalloonSubscription_Acquire(BALLOON_SUB_TIMING,
+            DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
         s_timingOwnSubscription = code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
-        s_timingSubscriptionReady = s_timingOwnSubscription ||
-            code == DJI_ERROR_SUBSCRIPTION_MODULE_CODE_TOPIC_DUPLICATE;
-        USER_LOG_INFO("Timing capture subscription: init=0x%llX subscribe=0x%llX owned=%d ready=%d",
-                      (unsigned long long)initCode, (unsigned long long)code,
-                      s_timingOwnSubscription, s_timingSubscriptionReady);
-        if (!s_timingSubscriptionReady) {
+        USER_LOG_INFO("Timing capture shared subscription: acquire=0x%llX ready=%d",
+                      (unsigned long long)code, s_timingOwnSubscription);
+        if (!s_timingOwnSubscription) {
             BalloonTiming_PoseProblem(now, "subscribe failed; no pose read attempted", code);
             return;
         }
@@ -104,7 +91,9 @@ static void BalloonTiming_Tick(bool busy)
     if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         BalloonTiming_PoseProblem(end, "GetLatestValue failed", code);
         if (code == DJI_ERROR_SUBSCRIPTION_MODULE_CODE_TOPIC_NOT_SUBSCRIBED) {
-            s_timingSubscriptionReady = s_timingOwnSubscription = false;
+            BalloonSubscription_ForgetMissing(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+            (void) BalloonSubscription_Release(BALLOON_SUB_TIMING, DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+            s_timingOwnSubscription = false;
             haveStamp = false;
         }
         return;

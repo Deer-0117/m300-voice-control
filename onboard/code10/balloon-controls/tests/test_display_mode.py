@@ -37,8 +37,9 @@ struct T_DjiTestApplyHighPowerHandler { int (*pinInit)(); int (*pinWrite)(); };
 #define CONFIG_MODULE_SAMPLE_WIDGET_SPEAKER_ON
 #define CONFIG_MODULE_SAMPLE_POWER_MANAGEMENT_ON
 #define CONFIG_MODULE_SAMPLE_DATA_TRANSMISSION_ON
-static int forbidden, core_init, core_start, widget_start, success_logs, fail_stage;
+static int forbidden, core_init, core_start, widget_start, success_logs, fail_stage, telemetry_start;
 #define USER_LOG_ERROR(...) ((void)0)
+#define USER_LOG_WARN(...) ((void)0)
 #define USER_LOG_INFO(...) ((void)++success_logs)
 static void DjiUser_NormalExitHandler(int) {}
 static int sleep(int) { return 0; }
@@ -61,6 +62,7 @@ static int DjiTest_DataTransmissionStartService() { ++forbidden;return 0; }
 static int BalloonChaseProbe_RunNoFlightProbe() { ++forbidden;return 0; }
 static int BalloonWidget_StartService(const char *,const char *,const char *,const char *) { ++widget_start;return fail_stage==1?1:0; }
 static int DjiCore_ApplicationStart() { ++core_start;return fail_stage==2?1:0; }
+static int BalloonTelemetry_Start() { assert(core_start==1 && fail_stage==0); ++telemetry_start; return 0; }
 '''
 CPP_EPILOGUE = r'''
 int main(int argc,char **argv) {
@@ -73,7 +75,7 @@ int main(int argc,char **argv) {
     assert(failed==(fail_stage!=0));
     assert(success_logs==(fail_stage==0?1:0));
     assert(core_start==(fail_stage==1?0:1));
-    assert(forbidden==0);
+    assert(forbidden==0 && telemetry_start==(fail_stage==0?1:0));
     return 0;
 }
 '''
@@ -85,9 +87,10 @@ MISSION_EXTRA = r'''
 #define BALLOON_DETECTION_REQUEST_FILE "request"
 #define BALLOON_MISSION_TOKEN "mission-token"
 #define BALLOON_EVIDENCE_TOKEN "evidence-token"
-typedef struct { unsigned int epoch; bool record,kalman; const char *mode; char voiceSession[96],token[96]; } T_BalloonMissionTask;
+typedef struct { unsigned int epoch; bool record; int prediction; int32_t detector; const char *mode; char voiceSession[96],token[96]; } T_BalloonMissionTask;
 static bool BalloonPanel_VoiceReady(void) { return true; }
 static bool BalloonWidget_UsesLiveview(void) { return true; }
+static bool BalloonPanel_WriteOptionsLease(const char *token) { (void)token; assert(false); return false; }
 static bool BalloonClock_Id(char id[80]) { strcpy(id,"mono-v1:11111111-1111-4111-8111-111111111111");return true; }
 static void RemoveFileIfExists(const char *p) { (void)p;assert(false); }
 static bool WriteStateFile(const char *p,const char *s) { (void)p;(void)s;assert(false);return false; }
@@ -97,9 +100,9 @@ static void BalloonWidget_ShowStep(const char *p,const char *s) { (void)p;(void)
 '''
 MISSION_MAIN = r'''
 int main(void) {
-    const char *modes[]={"any","voice","api_new"};
+    const char *modes[]={"any","pink","voice","api_new","next"};
     s_displayOnly=true; s_recordEnabled=true;
-    for(unsigned i=0;i<3;i++) {
+    for(unsigned i=0;i<sizeof(modes)/sizeof(modes[0]);i++) {
         assert(BalloonWidget_BeginMission(modes[i])==DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE);
         assert(strstr(last_message,"仅显示模式") && strstr(last_message,"未启动"));
     }
@@ -128,6 +131,7 @@ class DisplayMode(unittest.TestCase):
         widget = (panel.WIDGET/'psdk_balloon_widget.c').read_text()
         c = cls.folder/'mission.c'
         c.write_text(prelude + MISSION_EXTRA + panel.function(widget,'BalloonWidget_HelperBusy') +
+                     panel.function((panel.WIDGET/'balloon_flight_panel.h').read_text(),'BalloonPanel_Idle') +
                      panel.function(widget,'BalloonWidget_BeginMission') + MISSION_MAIN)
         cls.mission_binary = cls.folder/'mission'
         cls.compile(shlex.split(os.environ.get('CC','cc')) + ['-std=gnu11','-pthread',str(c),'-o',str(cls.mission_binary)])
@@ -146,7 +150,7 @@ class DisplayMode(unittest.TestCase):
                                             capture_output=True,text=True,timeout=5)
                     self.assertEqual(result.returncode,0,result.stderr)
 
-    def test_actual_mission_guard_rejects_all_three_start_modes_before_side_effects(self):
+    def test_actual_mission_guard_rejects_all_start_modes_before_side_effects(self):
         result = subprocess.run([str(self.mission_binary)],cwd=self.folder,capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr)
 
