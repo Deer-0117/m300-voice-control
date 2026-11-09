@@ -114,6 +114,10 @@ T_DjiReturnCode DjiGimbalManager_SetControllerSmoothFactor(E_DjiMountPosition po
 static T_TargetChaseConfig config;
 static void fresh(void) {
     DjiTargetChase_ControlDeviceStop();
+    /* Each case simulates a new SDK process. */
+    memset(s_balloonSharedTopics, 0, sizeof(s_balloonSharedTopics));
+    s_balloonSubscriptionInitialized = false;
+    control_device_callback = NULL;
     aircraft_type = DJI_AIRCRAFT_TYPE_UNKNOWN; obtain_result = subscribe_result = 0;
     control_samples_on_subscribe = grant_after_sleeps = wait_sleeps = stop_after_sleeps = 0;
     stream_samples = grant_immediately = duplicate_samples = false;
@@ -241,10 +245,10 @@ static void test_compatibility_models_and_subscription_failures(void) {
 static void test_compatibility_requires_advancing_initial_samples(void) {
     compatibility_prepare(); control_samples_on_subscribe = 0; stream_samples = false;
     assert(DjiTargetChase_Init(&config) == DJI_ERROR_SYSTEM_MODULE_CODE_TIMEOUT);
-    assert(!s_initialized && !control_device_callback && !commands);
+    assert(!s_initialized && !s_balloonControlDeviceCallback && !commands);
     compatibility_prepare(); control_samples_on_subscribe = 1; duplicate_samples = true;
     assert(DjiTargetChase_Init(&config) == DJI_ERROR_SYSTEM_MODULE_CODE_TIMEOUT);
-    assert(!s_initialized && !control_device_callback && !commands);
+    assert(!s_initialized && !s_balloonControlDeviceCallback && !commands);
 }
 static void test_compatibility_delayed_confirmation_and_takeover(void) {
     compatibility_start(); grant_after_sleeps = 5;
@@ -272,7 +276,7 @@ static void test_compatibility_stale_duplicate_and_zero_guard(void) {
     assert(DjiTargetChase_DeInit() == release_result && !commands && releases == 1);
     assert(DjiTargetChase_IsReleasePending() && s_initialized);
     release_result = 0; assert(DjiTargetChase_DeInit() == 0 && !commands && releases == 2);
-    assert(!DjiTargetChase_IsReleasePending() && !control_device_callback);
+    assert(!DjiTargetChase_IsReleasePending() && !s_balloonControlDeviceCallback);
 }
 static void test_compatibility_invalid_and_regressed_samples(void) {
     compatibility_start(); compatibility_acquire();
@@ -449,6 +453,44 @@ static void test_panel_stage_change_waits_for_new_visible_target(void) {
     }
     assert(DjiTargetChase_DeInit() == 0);
 }
+static void test_telemetry_first_keeps_authority_monitor_live(void) {
+    compatibility_prepare();
+    assert(BalloonSubscription_Acquire(BALLOON_SUB_BACKGROUND,
+        DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL) == 0);
+    DjiReceiveDataOfTopicCallback subscriber = control_device_callback;
+    assert(subscriber && !s_balloonControlDeviceCallback);
+    assert(DjiTargetChase_Init(&config) == 0);
+    assert(control_device_callback == subscriber);
+    compatibility_acquire();
+    assert(DjiTargetChase_DeInit() == 0);
+    assert(control_device_callback == subscriber && !s_balloonControlDeviceCallback);
+    assert(!s_control_device.enabled && !s_control_device.valid);
+    control_sample(4, true, true);
+    assert(!s_control_device.valid && !s_real_authority_obtained);
+}
+
+static void test_prediction_status_reports_fallback_and_stop(void) {
+    char text[256];
+    fresh();
+    T_TargetChaseCommand command = {.should_send = true};
+    s_chase.mode = TARGET_CHASE_MODE_ACTIVE;
+    s_chase.config.prediction_mode = 3;
+    s_chase.kf_reason = TARGET_KF_NO_CALIBRATION;
+    DjiTargetChase_PublishPredictionStatus(DjiTargetChase_NowMs(), true, &command);
+    assert(DjiTargetChase_PredictionStatus(text, sizeof(text)));
+    assert(strstr(text, "像素预测") && strstr(text, "缺有效时间校准"));
+    s_chase.kf_active = true;
+    s_chase.kf_reason = 0;
+    DjiTargetChase_PublishPredictionStatus(DjiTargetChase_NowMs(), true, &command);
+    assert(DjiTargetChase_PredictionStatus(text, sizeof(text)) && strstr(text, "延迟卡尔曼"));
+    test_clock_ms += 2001;
+    assert(!DjiTargetChase_PredictionStatus(text, sizeof(text)) && strstr(text, "已过期"));
+    DjiTargetChase_PublishPredictionStatus(DjiTargetChase_NowMs(), true, &command);
+    DjiTargetChase_RequestStop();
+    assert(!DjiTargetChase_PredictionStatus(text, sizeof(text)));
+    assert(DjiTargetChase_DeInit() == 0);
+}
+
 int main(void) {
     test_initial_callback_and_takeover();
     test_late_grant_keeps_stop_latched();
@@ -471,6 +513,8 @@ int main(void) {
     test_panel_waits_without_reset_or_search();
     test_panel_tracks_visible_target_without_edge_recovery();
     test_panel_stage_change_waits_for_new_visible_target();
-    puts("authority_stop: 21 groups passed (SDK stubs; no aircraft I/O)");
+    test_telemetry_first_keeps_authority_monitor_live();
+    test_prediction_status_reports_fallback_and_stop();
+    puts("authority_stop: 23 groups passed (SDK stubs; no aircraft I/O)");
     return 0;
 }

@@ -1,9 +1,13 @@
-/* Private implementation for the nine flight-panel controls. Included once. */
+/* Private implementation for the flight-panel controls. Included once. */
 #ifndef BALLOON_FLIGHT_PANEL_H
 #define BALLOON_FLIGHT_PANEL_H
 
 #define PANEL_HELPER "/home/uav/offline_balloon_strike_test/flight_panel_tools.py"
 #define PANEL_MESSAGE "/tmp/balloon_panel_message.txt"
+#define BALLOON_OPTIONS_HELPER "/home/uav/offline_balloon_strike_test/widget_test_options.py"
+#define BALLOON_OPTIONS_REQUEST "/tmp/balloon_test_options.request"
+#define BALLOON_OPTIONS_ACK "/tmp/balloon_test_options.ack"
+#define BALLOON_OPTIONS_MESSAGE "/tmp/balloon_test_options.message"
 #define API_VOICE_SESSION "/tmp/balloon_api_voice.session"
 #define API_VOICE_READY "/tmp/balloon_api_voice.ready"
 #define API_VOICE_CANDIDATE "/home/uav/offline_balloon_strike_test/voice_command_candidate.json"
@@ -19,6 +23,8 @@ static int BalloonPanel_RunChild(char *const argv[], unsigned int epoch, pid_t *
 {
     pid_t child;
     int status = 0;
+    const bool detectorHelper = owner == &s_optionsPid;
+    const uint64_t started = detectorHelper ? BalloonClock_NowMs() : 0;
     uint64_t cancelledAt = 0;
     pthread_mutex_lock(&s_actionMutex);
     if (epoch != s_actionEpoch) { pthread_mutex_unlock(&s_actionMutex); return -1; }
@@ -48,10 +54,17 @@ static int BalloonPanel_RunChild(char *const argv[], unsigned int epoch, pid_t *
             pthread_mutex_unlock(&s_actionMutex);
             return result == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         }
-        if (epoch != s_actionEpoch) {
-            uint64_t now = BalloonClock_NowMs();
-            if (!cancelledAt) { cancelledAt = now; (void) kill(-child, SIGTERM); }
-            else if (now - cancelledAt >= 2000) (void) kill(-child, SIGKILL);
+        const uint64_t now = detectorHelper || epoch != s_actionEpoch ? BalloonClock_NowMs() : 0;
+        if (epoch != s_actionEpoch || (detectorHelper && now - started >= 90000U)) {
+            if (!cancelledAt) {
+                cancelledAt = now;
+                /* The detector helper must be allowed to roll back its systemd
+                 * transaction. Signal Python first, leaving its tools alive. */
+                if (detectorHelper) (void) remove(BALLOON_OPTIONS_REQUEST);
+                (void) kill(detectorHelper ? child : -child, SIGTERM);
+            } else if (now - cancelledAt >= (detectorHelper ? 25000U : 2000U)) {
+                (void) kill(-child, SIGKILL);
+            }
         }
         pthread_mutex_unlock(&s_actionMutex);
         usleep(20000);
@@ -229,6 +242,142 @@ static T_DjiReturnCode BalloonPanel_StartTool(int kind)
     pthread_detach(thread);
     BalloonWidget_ShowMessage(kind == PANEL_SAMPLE ? "正在采集相机/姿态；采样完成不等于时间标定有效" :
                              kind == PANEL_KALMAN ? "正在核验本次开机时间标定" : "正在核验部署、运行版本和时间标定");
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+static T_DjiReturnCode BalloonPanel_SetPrediction(int mode)
+{
+    if (mode == 3) return BalloonPanel_StartTool(PANEL_KALMAN);
+    if (!BalloonPanel_Idle()) {
+        BalloonWidget_ShowMessage("请先停止当前任务，再切换预测模式");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
+    }
+    if (setenv("BALLOON_PREDICTION_MODE", mode == 0 ? "0" : "1", 1) != 0)
+        return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    s_predictionMode = mode;
+    BalloonWidget_ShowMessage(mode == 0 ? "已选择运动补偿预测，下次任务生效" : "已选择基线预测模式1，下次任务生效");
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+static int32_t BalloonPanel_ReadDetectorSelection(void)
+{
+    cJSON *root = BalloonVisual_ReadJson("/home/uav/offline_balloon_strike_test/detector_config.json");
+    const cJSON *mode = cJSON_GetObjectItemCaseSensitive(root, "active_detector");
+    const cJSON *pixelConfig = cJSON_GetObjectItemCaseSensitive(root, "pixel_config");
+    int32_t selection = -1;
+    if (cJSON_IsString(mode) && cJSON_IsString(pixelConfig) && pixelConfig->valuestring[0]) {
+        if (strcmp(mode->valuestring, "yolo") == 0) selection = 0;
+        else if (strcmp(mode->valuestring, "pixel") == 0) selection = 1;
+    }
+    cJSON_Delete(root);
+    return selection;
+}
+
+static char *BalloonPanel_DetectorName(int32_t selection)
+{
+    return selection == 1 ? "pixel" : "yolo";
+}
+
+static bool BalloonPanel_WriteOptionsLease(const char *token)
+{
+    char temporary[] = BALLOON_OPTIONS_REQUEST ".XXXXXX";
+    int fd = mkstemp(temporary);
+    if (fd < 0) return false;
+    bool written = dprintf(fd, "%s\n%lu\n", token, (unsigned long)getpid()) > 0;
+    if (close(fd) != 0) written = false;
+    (void) remove(BALLOON_OPTIONS_ACK);
+    (void) remove(BALLOON_OPTIONS_MESSAGE);
+    if (written && rename(temporary, BALLOON_OPTIONS_REQUEST) == 0) return true;
+    (void) remove(temporary);
+    return false;
+}
+
+static int BalloonPanel_RunDetectorHelper(char *operation, int32_t selection, char *token, unsigned int epoch)
+{
+    char pid[24];
+    snprintf(pid, sizeof(pid), "%lu", (unsigned long)getpid());
+    char *args[] = {BALLOON_VOICE_PYTHON, BALLOON_OPTIONS_HELPER, operation,
+        BalloonPanel_DetectorName(selection), "--token", token, "--owner-pid", pid, NULL};
+    return BalloonPanel_RunChild(args, epoch, &s_optionsPid);
+}
+
+static void BalloonPanel_ShowDetectorMessage(const char *fallback)
+{
+    char message[320] = {0};
+    int fd = open(BALLOON_OPTIONS_MESSAGE, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd >= 0) {
+        struct stat status;
+        if (fstat(fd, &status) == 0 && S_ISREG(status.st_mode) && status.st_uid == geteuid())
+            (void) read(fd, message, sizeof(message) - 1);
+        close(fd);
+    }
+    BalloonWidget_ShowMessage(message[0] ? message : fallback);
+}
+
+typedef struct {
+    unsigned int epoch;
+    int32_t selection;
+    uint32_t button;
+    char token[96];
+} T_BalloonDetectorSelection;
+
+static void *BalloonPanel_DetectorTask(void *argument)
+{
+    T_BalloonDetectorSelection *task = argument;
+    int result = BalloonPanel_RunDetectorHelper("--select-detector", task->selection, task->token, task->epoch);
+    T_DjiReturnCode code = DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    pthread_mutex_lock(&s_actionMutex);
+    if (task->epoch != s_actionEpoch) {
+        /* A cancellation after the helper committed can still leave the
+         * new configuration on disk. A mission verifies the loaded worker. */
+        s_detectorSelection = BalloonPanel_ReadDetectorSelection();
+        BalloonWidget_ShowMessage("识别切换已取消；开始测试前会重新核对识别服务");
+    } else if (result == 0 && BalloonMission_Matches(BALLOON_OPTIONS_ACK, task->token)) {
+        s_detectorSelection = task->selection;
+        BalloonWidget_ShowMessage(task->selection ? "黄色像素检测已就绪" : "YOLO识别已就绪");
+        code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+    } else {
+        BalloonPanel_ShowDetectorMessage("识别切换未通过确认，原选项保持不变");
+    }
+    (void) remove(BALLOON_OPTIONS_REQUEST);
+    s_panelBusy = false;
+    BalloonWidget_LogButton(task->button, task->selection, "async_complete", code);
+    pthread_mutex_unlock(&s_actionMutex);
+    free(task);
+    return NULL;
+}
+
+static T_DjiReturnCode BalloonPanel_SelectDetector(int32_t selection, uint32_t button)
+{
+    if (!s_displayOnly) {
+        BalloonWidget_ShowMessage("请先在地面停止任务并开启仅显示/维护，再切换识别方案");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT_IN_CURRENT_STATE;
+    }
+    if (s_newVoicePending || s_isArmed || s_apiTestCleanupFailed) {
+        BalloonWidget_ShowMessage("请先停止并清除候选，再切换识别方案");
+        return DJI_ERROR_SYSTEM_MODULE_CODE_BUSY;
+    }
+    T_BalloonDetectorSelection *task = calloc(1, sizeof(*task));
+    if (!task) return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    task->epoch = ++s_actionEpoch;
+    task->selection = selection;
+    task->button = button;
+    snprintf(task->token, sizeof(task->token), "options-%lu-%llu-%u", (unsigned long)getpid(),
+             (unsigned long long)BalloonClock_NowMs(), task->epoch);
+    if (!BalloonPanel_WriteOptionsLease(task->token)) {
+        free(task);
+        return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    }
+    pthread_t thread;
+    s_panelBusy = true;
+    if (pthread_create(&thread, NULL, BalloonPanel_DetectorTask, task) != 0) {
+        s_panelBusy = false;
+        (void) remove(BALLOON_OPTIONS_REQUEST);
+        free(task);
+        return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+    }
+    pthread_detach(thread);
+    BalloonWidget_ShowMessage("正在切换识别服务；请等待就绪，可按停止测试取消");
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 

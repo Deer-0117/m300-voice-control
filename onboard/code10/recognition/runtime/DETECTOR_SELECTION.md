@@ -20,6 +20,8 @@ YOLO 后的 HSV 分类保留上游三组：`pink` 对应粉/红/橙，`yellow` �
 
 ## 配置与切换
 
+新版面板可以在维护开启且任务空闲时切换识别。执行端核对检测进程和配置后回报就绪。以下命令行入口仍适用于停止两个 SDK 服务后的维护操作。
+
 YOLO 使用设备已有 `yolo_callable_module/weights/best.pt` 和可选 `best_fp16.engine`。模型和环境不入库。选择 TensorRT 的环境配置为 `BALLOON_YOLO_BACKEND=tensorrt`、`BALLOON_TRT_ENGINE=<engine路径>`；YOLO 配置为 640 像素输入、置信度 0.25。原有 `yolo_env` 路径名不代表像素模式会导入神经网络。
 
 只读检查无需 sudo，也不操作服务：

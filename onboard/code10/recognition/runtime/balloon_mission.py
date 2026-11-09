@@ -11,7 +11,7 @@ import threading
 import uuid
 
 from balloon_clock import clock_id, now_ms
-from uav_capabilities import validate_actions
+from uav_capabilities import canonical_balloon_color, validate_actions
 
 ROOT = Path(__file__).resolve().parent
 TMP = Path('/tmp')
@@ -30,6 +30,8 @@ PLAN = ROOT / 'nl_task_plan.json'
 STATE = ROOT / 'nl_task_state.json'
 EVENTS = ROOT / 'widget_events.jsonl'
 REPLACE_RETRIES = 6 if os.name == 'nt' else 1
+MISSION_MODES = ('any', 'pink', 'voice', 'api_new', 'next')
+OPTION_KEYS = ('detector', 'prediction')
 _FILE_LOCK = threading.RLock()
 
 
@@ -98,8 +100,9 @@ def event(name: str, **fields) -> None:
 
 
 class MissionGate:
-    """Runs inside the actual YOLO worker, including while it is idle."""
-    def __init__(self) -> None:
+    """Runs inside the actual detector worker, including while it is idle."""
+    def __init__(self, active_detector: str | None = None) -> None:
+        self.active_detector = active_detector
         self.last_error = None
         self.last_token = None
         self.last_publish = -1000
@@ -120,6 +123,11 @@ class MissionGate:
                 raise ValueError('启动请求已取消或属于其他开机周期')
             plan = read_json(PLAN)
             actions = validate_actions(plan['actions'])
+            options = {key: request[key] for key in OPTION_KEYS if key in request}
+            if options:
+                validate_test_options(actions, options.get('detector'), options.get('prediction'))
+                if options['detector'] != self.active_detector:
+                    raise ValueError('实际检测服务与所选识别方案不一致，任务未放行')
             if (not plan.get('plan_id') or plan['plan_id'] != request['plan_id'] or
                     digest(plan) != request['digest']):
                 raise ValueError('计划丢失、被替换或内容变化')
@@ -138,7 +146,7 @@ class MissionGate:
             current = now_ms()
             color = actions[sequence.current_index].get('parameters', {}).get('color', 'stop')
             context = dict(token=token, plan_id=plan['plan_id'], clock_id=clock_id(),
-                           current_index=sequence.current_index, requested_color=color)
+                           current_index=sequence.current_index, requested_color=color, **options)
             changed = not self.visual_context or any(self.visual_context.get(k) != v
                                                      for k, v in context.items())
             started = request['started_ts_ms']
@@ -150,12 +158,13 @@ class MissionGate:
                 receipt = dict(token=token, plan_id=plan['plan_id'], digest=request['digest'],
                                clock_id=clock_id(), ts_ms=current, status='loaded',
                                current_index=sequence.current_index, worker_pid=os.getpid(),
-                               requested_color=color, started_ts_ms=context['started_ts_ms'])
+                               requested_color=color, started_ts_ms=context['started_ts_ms'], **options)
                 atomic_json(ACK, receipt)
                 atomic_text(HEALTH, f'{token}\t{clock_id()}\t{current}\n')
-                color = actions[sequence.current_index].get('parameters', {}).get('color', 'stop')
                 colors = {'pink': '粉色', 'yellow': '黄色', 'any': '任意气球'}
                 title = {'pink': '粉→黄', 'any': '任意气球', 'voice': 'API语音任务', 'api_new': '新API语音任务', 'next': '继续剩余目标'}[request['mode']]
+                detector_name = {'yolo': 'YOLO', 'pixel': '颜色像素'}.get(self.active_detector)
+                detector_status = f'｜识别：{detector_name}' if detector_name else ''
                 recording = '关闭'
                 if request['record']:
                     try:
@@ -163,7 +172,8 @@ class MissionGate:
                         recording = '录制中' if rec.get('token') == token and rec.get('status') == 'recording' else '等待/异常'
                     except (OSError, ValueError):
                         recording = '等待/异常'
-                atomic_text(STATUS, f'任务：{title}｜当前：{colors.get(color, color)}（{sequence.current_index + 1}/{len(actions)}）｜录像：{recording}')
+                atomic_text(STATUS, f'任务：{title}{detector_status}｜当前：{colors.get(color, color)}'
+                                    f'（{sequence.current_index + 1}/{len(actions)}）｜录像：{recording}')
                 self.last_publish = current
             transition = (token, sequence.current_index, sequence.status, COMMIT.exists())
             if transition != self.last_transition:
@@ -193,18 +203,40 @@ def strike_actions(colors) -> list[dict]:
     return [dict(capability='strike_balloon', parameters=dict(color=color)) for color in colors]
 
 
-def prepare(mode: str, token: str, record: bool, voice_session: str | None = None) -> None:
+def validate_test_options(actions: list[dict], detector: str | None, prediction: int | None) -> None:
+    if detector not in ('yolo', 'pixel') or type(prediction) is not int or prediction not in (0, 1, 3):
+        raise ValueError('识别或预测选项无效，请重新选择')
+    if detector == 'pixel' and any(
+            action['capability'] == 'strike_balloon' and
+            canonical_balloon_color(action['parameters']['color']) not in ('yellow', 'any')
+            for action in actions):
+        raise ValueError('颜色像素检测只支持黄/浅绿组；粉黄或其他颜色任务请选YOLO')
+
+
+def prepare(mode: str, token: str, record: bool, voice_session: str | None = None,
+            *, detector: str | None = None, prediction: int | None = None) -> None:
+    if mode not in MISSION_MODES:
+        raise ValueError('任务类型无效，请重新选择')
     if not token or len(token) > 95 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in token):
         raise ValueError("invalid mission token")
     if not token_matches(token):
         raise ValueError('启动已取消')
+    has_options = detector is not None or prediction is not None
+    if has_options:
+        validate_test_options([], detector, prediction)
     api_decision = None
+    skipped = None
     if mode in ('voice', 'api_new'):
         # Confirmation can perform a remote request. The C epoch check and
         # token check below reject a result that arrives after Stop.
         from uav_voice_command import confirm
         previous_id = read_json(PLAN).get('plan_id') if PLAN.exists() else None
-        confirmation = confirm(session=voice_session, mission_token=token, allow_deferred=mode == 'api_new')
+        confirmation_options = {}
+        if detector == 'pixel':
+            confirmation_options['validate_plan_actions'] = lambda actions: validate_test_options(
+                actions, detector, prediction)
+        confirmation = confirm(session=voice_session, mission_token=token,
+                               allow_deferred=mode == 'api_new', **confirmation_options)
         plan = read_json(PLAN)
         if plan.get('plan_id') == previous_id:
             raise ValueError('语音未生成新的本机计划')
@@ -215,17 +247,19 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
     elif mode == 'next':
         old = read_json(PLAN)
         state = read_json(STATE)
-        if state.get('plan_id') != old.get('plan_id') or state.get('status') != 'awaiting_confirmation':
+        if (state.get('plan_id') != old.get('plan_id') or state.get('status') != 'awaiting_confirmation'
+                or state.get('runtime_clock_id') != clock_id()):
             raise ValueError('当前没有等待处理的目标')
         index = state['current_index']
         actions = validate_actions(old['actions'])
-        if not isinstance(index, int) or index < 0 or index + 1 >= len(actions):
+        if type(index) is not int or index < 0 or index + 1 >= len(actions):
             raise ValueError('已经是最后一个目标，没有下一目标')
-        event('operator_skipped_unconfirmed_target', plan_id=old['plan_id'], index=index,
-              physical_outcome='unknown')
         actions = actions[index + 1:]
+        skipped = dict(plan_id=old['plan_id'], index=index, physical_outcome='unknown')
     else:
         actions = strike_actions(('pink', 'yellow') if mode == 'pink' else ('any',))
+    if has_options:
+        validate_test_options(actions, detector, prediction)
     if not token_matches(token):
         raise ValueError('启动已取消，迟到结果已拒绝')
     # A new immutable plan for every start, including explicit any-balloon.
@@ -237,6 +271,8 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
     STOP.unlink(missing_ok=True)
     request = dict(token=token, mode=mode, record=record, plan_id=plan['plan_id'],
                    digest=digest(plan), clock_id=clock_id(), started_ts_ms=now_ms())
+    if has_options:
+        request.update(detector=detector, prediction=prediction)
     archive = EVENTS.parent / 'mission_records' / token
     archive.mkdir(parents=True, exist_ok=True)
     atomic_json(archive / 'request.json', request)
@@ -244,11 +280,14 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
     atomic_json(REQUEST, request)
     event('mission_requested', **request)
     wait_ack(request)
+    if skipped:
+        event('operator_skipped_unconfirmed_target', **skipped)
     atomic_text(READY, token + '\n')
     event('mission_loaded_before_start', **request)
 
 
 def wait_ack(request: dict, timeout: float = 12.0) -> None:
+    keys = ('token', 'plan_id', 'digest', 'clock_id') + tuple(key for key in OPTION_KEYS if key in request)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not token_matches(request['token']):
@@ -256,13 +295,13 @@ def wait_ack(request: dict, timeout: float = 12.0) -> None:
         try:
             ack = read_json(ACK)
             age = now_ms() - ack['ts_ms']
-            if (all(ack.get(k) == request[k] for k in ('token', 'plan_id', 'digest', 'clock_id'))
+            if (all(type(ack.get(k)) is type(request[k]) and ack[k] == request[k] for k in keys)
                     and ack.get('status') == 'loaded' and 0 <= age <= 1500):
                 return
         except (OSError, ValueError, KeyError, TypeError):
             pass
         time.sleep(.05)
-    raise ValueError('执行端未确认加载计划，请检查YOLO服务后重试')
+    raise ValueError('执行端未确认加载计划和所选方案，请检查检测服务后重试')
 
 
 def wait_record(token: str, timeout: float = 12.0) -> None:
@@ -289,10 +328,12 @@ def wait_record(token: str, timeout: float = 12.0) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=('any', 'pink', 'voice', 'api_new', 'next'))
+    parser.add_argument('--mode', choices=MISSION_MODES)
     parser.add_argument('--token', required=True)
     parser.add_argument('--voice-session')
     parser.add_argument('--record', type=int, choices=(0, 1), default=1)
+    parser.add_argument('--detector', choices=('yolo', 'pixel'))
+    parser.add_argument('--prediction', type=int, choices=(0, 1, 3))
     parser.add_argument('--wait-record', action='store_true')
     args = parser.parse_args()
     try:
@@ -301,7 +342,8 @@ def main() -> int:
         else:
             if not args.mode:
                 raise ValueError('缺少任务类型')
-            prepare(args.mode, args.token, bool(args.record), args.voice_session)
+            prepare(args.mode, args.token, bool(args.record), args.voice_session,
+                    detector=args.detector, prediction=args.prediction)
         return 0
     except Exception as exc:
         atomic_text(MESSAGE, str(exc))

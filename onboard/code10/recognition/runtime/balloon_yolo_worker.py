@@ -2074,7 +2074,7 @@ def main() -> int:
     append_control_event("worker_ready", {"poll_ms": args.poll_ms, "backend": detector.backend_name})
 
     from balloon_mission import MissionGate
-    TASK_SEQUENCE.mission_gate = MissionGate()
+    TASK_SEQUENCE.mission_gate = MissionGate(active_detector=config["active_detector"])
     last_key: tuple[int, int, str] | None = None
     while not stop:
         # Acknowledge the exact plan even before the camera is started.

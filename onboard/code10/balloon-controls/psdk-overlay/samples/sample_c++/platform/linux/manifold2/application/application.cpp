@@ -47,6 +47,7 @@
 #include <camera_emu/test_payload_cam_emu_base.h>
 #include "widget/test_widget.h"
 #include "widget/test_widget_speaker.h"
+#include "balloon_widget/balloon_background_telemetry.h"
 #include "balloon_widget/balloon_chase_probe.h"
 #include "balloon_widget/psdk_balloon_widget.h"
 #include <power_management/test_power_management.h>
@@ -378,6 +379,11 @@ void Application::DjiUser_ApplicationStart()
     returnCode = DjiCore_ApplicationStart();
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         throw std::runtime_error("Start sdk application error.");
+    }
+
+    returnCode = BalloonTelemetry_Start();
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        USER_LOG_WARN("Background telemetry startup failed, stat = 0x%08llX", returnCode);
     }
 
     if (!displayOnly) {

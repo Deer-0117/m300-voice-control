@@ -30,20 +30,41 @@ CLOCK_RE = re.compile(r'mono-v1:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]
 ID_RE = re.compile(r'[A-Za-z0-9_.-]{1,79}\Z')
 HASH_RE = re.compile(r'[0-9a-f]{64}\Z')
 
-# DJI Pilot's settings page needs its own IDs for the six shortcut actions.
-# Keep this contract exact: sixteen controls expose ten distinct actions.
-WIDGET_ALIASES = {60: 50, 61: 51, 65: 55, 66: 56, 67: 57, 68: 58}
-WIDGET_SCHEMA = ([['main', index, 'button'] for index in (50, 51, 55, 56, 57, 58)] +
-                 [['config', index, 'switch' if index in (54, 69) else 'button']
-                  for index in (69, 60, 61, 52, 53, 54, 65, 66, 67, 68)])
+# The v7 manifest remains the installed snapshot until a new build is staged.
+WIDGET_ALIASES = {60: 50, 61: 51, 65: 55, 66: 56, 67: 57, 68: 58,
+                  91: 81, 92: 82, 93: 83, 94: 84}
+WIDGET_TYPES = {54: 'switch', 69: 'switch', 81: 'list', 82: 'list', 83: 'list',
+                91: 'list', 92: 'list', 93: 'list', 98: 'switch'}
+LEGACY_WIDGET_SCHEMA = (
+    [['main', index, 'button'] for index in (50, 51, 55, 56, 57, 58)] +
+    [['config', index, WIDGET_TYPES.get(index, 'button')]
+     for index in (69, 60, 61, 52, 53, 54, 65, 66, 67, 68)]
+)
+WIDGET_SCHEMA = (
+    [['main', index, WIDGET_TYPES.get(index, 'button')]
+     for index in (50, 55, 51, 81, 82, 83, 84, 58)] +
+    [['config', index, WIDGET_TYPES.get(index, 'button')]
+     for index in (69, 60, 61, 52, 53, 54, 65, 66, 67, 91, 92, 93, 94, 98, 99, 68)]
+)
 WIDGET_NAMES = {
     'cn': {50: '语音输入任务', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
            54: 'Kalman预测模式', 55: '执行API语音任务', 56: '新增API语音任务',
-           57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护'},
+           57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护',
+           81: '任务类型', 82: '识别方案', 83: '预测方案', 84: '开始测试',
+           98: '测试时录像', 99: '跳过当前目标，继续下一目标'},
     'en': {50: 'Voice task input', 51: 'Connect API', 52: 'Camera / pose sampling',
            53: 'Deployment / calibration check', 54: 'Kalman prediction mode',
            55: 'Execute API voice task', 56: 'New API voice task',
-           57: 'Clear voice candidate', 58: 'Stop test', 69: 'Display only / maintenance'},
+           57: 'Clear voice candidate', 58: 'Stop test', 69: 'Display only / maintenance',
+           81: 'Task type', 82: 'Detector', 83: 'Prediction', 84: 'Start test',
+           98: 'Record test', 99: 'Skip to next target'},
+}
+
+WIDGET_CHOICES = {
+    'cn': {81: ['任意气球', '粉→黄'], 82: ['YOLO', '颜色像素检测'],
+           83: ['原版像素预测', '运动补偿预测', '运动补偿＋延迟卡尔曼']},
+    'en': {81: ['Any balloon', 'Pink → yellow'], 82: ['YOLO', 'Color pixel detection'],
+           83: ['Original pixel prediction', 'Motion compensation', 'Motion compensation + delayed Kalman']},
 }
 
 REASONS = {
@@ -237,9 +258,8 @@ def deployment_status(manifest_path: Path = MANIFEST, *, sdk_root=SDK, runtime_r
     schema = manifest.get('widget_schema')
     if not isinstance(rows, list) or not 3 <= len(rows) <= 128 or not isinstance(schema, list):
         raise ValueError('incomplete release manifest')
-    if (any(not isinstance(r, list) or len(r) != 3 or r[0] not in ('main', 'config') or
-            type(r[1]) is not int or not 0 <= r[1] < 256 or r[2] not in ('button', 'switch') for r in schema)
-            or schema != WIDGET_SCHEMA):
+    if (schema not in (WIDGET_SCHEMA, LEGACY_WIDGET_SCHEMA) or
+            any(type(row[1]) is not int for row in schema)):
         raise ValueError('invalid widget schema')
     checked = {}
     for row in rows:
@@ -265,16 +285,22 @@ def deployment_status(manifest_path: Path = MANIFEST, *, sdk_root=SDK, runtime_r
                     action = WIDGET_ALIASES.get(row['widget_index'], row['widget_index'])
                     if row.get('widget_name') != WIDGET_NAMES[language].get(action):
                         issues.append('widget_name_mismatch')
-                    # Settings widgets do not require icons in the DJI schema.
-                    if page == 'config' and 'icon_file_set' not in row:
-                        continue
-                    icons = row['icon_file_set']
-                    if not isinstance(icons, dict) or not icons:
-                        raise ValueError('empty icon set')
-                    for icon in icons.values():
-                        if (not isinstance(icon, str) or not icon or Path(icon).name != icon or
-                                not (path.parent / icon).is_file()):
-                            raise ValueError('invalid or missing icon')
+                    if row['widget_type'] == 'list':
+                        items = row['list_item']
+                        if [item['item_name'] for item in items] != WIDGET_CHOICES[language].get(action):
+                            raise ValueError('invalid choices or order')
+                    else:
+                        items = [row]
+                    for item in items:
+                        if page == 'config' and 'icon_file_set' not in item:
+                            continue
+                        icons = item['icon_file_set']
+                        if not isinstance(icons, dict) or not icons:
+                            raise ValueError('empty icon set')
+                        for icon in icons.values():
+                            if (not isinstance(icon, str) or not icon or Path(icon).name != icon or
+                                    not (path.parent / icon).is_file()):
+                                raise ValueError('invalid or missing icon')
             if actual != schema:
                 issues.append('widget_schema_mismatch')
         except (OSError, ValueError, KeyError, TypeError):

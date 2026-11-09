@@ -18,6 +18,13 @@ gcc -std=gnu99 -D_GNU_SOURCE -O2 -Wall -Wextra -Werror \
     "$root/tests/camera_pose_capture_test.c" -lm -o "$output/camera_pose_capture"
 mkdir -p "$output/camera_pose_fixture"
 timeout 30 "$output/camera_pose_capture" "$output/camera_pose_fixture"
+gcc -std=gnu99 -D_GNU_SOURCE -O2 -Wall -Wextra -Werror -pthread \
+    -I"$sdk/psdk_lib/include" -I"$module" \
+    "$root/tests/background_telemetry_test.c" "$root/tests/background_telemetry_peer.c" \
+    -lm -o "$output/background_telemetry"
+mkdir -p "$output/background_telemetry_fixture" "$output/background_telemetry_thread_fixture"
+timeout 30 "$output/background_telemetry" "$output/background_telemetry_fixture"
+timeout 30 "$output/background_telemetry" "$output/background_telemetry_thread_fixture" --runtime
 for check in delayed_kf_control performance_control; do
     gcc -std=gnu99 -D_GNU_SOURCE -DCJSON_HIDE_SYMBOLS -O2 -Wall -Wextra -Werror -pthread \
         -flto -fwhole-program -ffunction-sections -fdata-sections \

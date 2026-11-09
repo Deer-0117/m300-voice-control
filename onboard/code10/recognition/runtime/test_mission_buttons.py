@@ -206,45 +206,40 @@ class MissionTests(unittest.TestCase):
             default = Path('/home/uav/yanshou_uav/uavs_psdk/psdk_dji_3.9.2_cpp_json/samples/sample_c/module_sample/balloon_widget/widget_file')
         base = Path(os.environ.get('BALLOON_WIDGET_CONFIG_ROOT', str(default)))
         schemas = []
-        aliases = {60: 50, 61: 51, 65: 55, 66: 56, 67: 57, 68: 58}
+        aliases = {60: 50, 61: 51, 65: 55, 66: 56, 67: 57, 68: 58,
+                   91: 81, 92: 82, 93: 83, 94: 84}
+        main_ids = [50, 55, 51, 81, 82, 83, 84, 58]
+        settings_ids = [69, 60, 61, 52, 53, 54, 65, 66, 67, 91, 92, 93, 94, 98, 99, 68]
         for language in ('cn', 'en'):
             config = json.loads((base/f'{language}_big_screen/widget_config.json').read_text(encoding='utf-8'))
             main = config['main_interface']['widget_list']
             settings = config['config_interface']['widget_list']
             entries = main + settings
             schemas.append([(entry['widget_index'], entry['widget_type']) for entry in entries])
-            self.assertEqual(len(entries), 16)
-            self.assertEqual(len({entry['widget_index'] for entry in entries}), len(entries))
-            self.assertEqual({entry['widget_index'] for entry in entries}, set(range(50, 59)) | set(aliases) | {69})
-            self.assertEqual([entry['widget_index'] for entry in main], [50, 51, 55, 56, 57, 58])
-            self.assertEqual([entry['widget_index'] for entry in settings], [69, 60, 61, 52, 53, 54, 65, 66, 67, 68])
-            self.assertTrue(all(entry['widget_type'] == 'button' for entry in main))
-            self.assertEqual([(entry['widget_index'], entry['widget_type']) for entry in settings],
-                             [(69, 'switch'), (60, 'button'), (61, 'button'), (52, 'button'), (53, 'button'),
-                              (54, 'switch'), (65, 'button'), (66, 'button'), (67, 'button'), (68, 'button')])
+            self.assertEqual([entry['widget_index'] for entry in main], main_ids)
+            self.assertEqual([entry['widget_index'] for entry in settings], settings_ids)
             self.assertNotIn('icon_file_set', settings[0])
             self.assertTrue(config['main_interface']['floating_window']['is_enable'])
             self.assertTrue(config['main_interface']['speaker']['is_enable_voice'])
             self.assertFalse(config['main_interface']['speaker']['is_enable_tts'])
-            # New IDs prevent cached 18-29 controls from triggering new actions.
             names = ({50: '语音输入任务', 51: 'API联网', 52: '相机/姿态采样', 53: '部署/标定核验',
                       54: 'Kalman预测模式', 55: '执行API语音任务', 56: '新增API语音任务',
-                      57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护'}
+                      57: '清除候选语音任务', 58: '停止测试', 69: '仅显示/维护',
+                      81: '任务类型', 82: '识别方案', 83: '预测方案', 84: '开始测试',
+                      98: '测试时录像', 99: '跳过当前目标，继续下一目标'}
                      if language == 'cn' else
                      {50: 'Voice task input', 51: 'Connect API', 52: 'Camera / pose sampling',
                       53: 'Deployment / calibration check', 54: 'Kalman prediction mode',
-                      55: 'Execute API voice task', 56: 'New API voice task',
-                      57: 'Clear voice candidate', 58: 'Stop test', 69: 'Display only / maintenance'})
+                      55: 'Execute API voice task', 56: 'New API voice task', 57: 'Clear voice candidate',
+                      58: 'Stop test', 69: 'Display only / maintenance', 81: 'Task type',
+                      82: 'Detector', 83: 'Prediction', 84: 'Start test',
+                      98: 'Record test', 99: 'Skip to next target'})
+            types = {54: 'switch', 69: 'switch', 81: 'list', 82: 'list', 83: 'list', 98: 'switch'}
             for entry in entries:
                 self.assertFalse(entry['customize_rc_buttons_config']['is_enable'])
                 action = aliases.get(entry['widget_index'], entry['widget_index'])
                 self.assertEqual(entry['widget_name'], names[action])
-            by_id = {entry['widget_index']: entry for entry in entries}
-            for alias, action in aliases.items():
-                self.assertEqual(by_id[alias]['widget_name'], by_id[action]['widget_name'])
-                self.assertEqual(by_id[alias]['widget_type'], by_id[action]['widget_type'])
-            self.assertEqual({aliases.get(entry['widget_index'], entry['widget_index']) for entry in entries},
-                             set(range(50, 59)) | {69})
+                self.assertEqual(entry['widget_type'], types.get(action, 'button'))
         self.assertEqual(schemas[0], schemas[1])
 
     def test_recorder_ack_matches_actual_session_and_flushes_on_stop(self):

@@ -24,7 +24,8 @@ def snapshot(sequence) -> dict | None:
 def frame_is_current(sequence, context: dict | None, payload: dict,
                      width, height, source: str) -> bool:
     """Validate before feeding the stateful task selector, not just publishing."""
-    if not context or source not in ('yolo', 'pixel') or snapshot(sequence) != context:
+    if (not context or source not in ('yolo', 'pixel') or context.get('detector', source) != source
+            or snapshot(sequence) != context):
         return False
     capture = payload.get('capture_ts_ms')
     finished = payload.get('detection_finished_ts_ms')

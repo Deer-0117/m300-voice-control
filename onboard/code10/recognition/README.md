@@ -1,5 +1,7 @@
 # code10 运行、识别与规划模块
 
+组合测试由 `widget_test_options.py` 核对当前检测进程、开机时钟与配置。`balloon_mission.py` 在计划握手中携带 `detector` 和 `prediction`，执行端确认后继续使用 v7 的视觉预检。省略两个选项的旧任务调用仍使用原握手格式。导出的后台遥测可由 `analyze_background_telemetry.py` 分析。
+
 2026-11-05 选择性整合 Conti `75469fe8` 的 [YOLO/HSV 可选检测模块](runtime/DETECTOR_SELECTION.md)：默认使用本地 YOLO+HSV；纯 HSV 像素模块仅对随包黄/浅绿场景可选。图片识别不调用 API，API 保留文本任务解析。YOLO 颜色目前仍是粉/红/橙、黄/绿、蓝/紫三组，未宣称七色独立识别。此次新增来源与适配见 [视觉来源清单](VISION_SOURCE_MANIFEST.json)。
 
 `runtime/` 以 2026-11-02 的 52 文件快照为基础，新增 v7 本地视觉模块、任务绑定回执及回归测试；运行源来自 `/home/uav/offline_balloon_strike_test`，`agent/` 来自 `/opt/uav-microsoft-agent/app`。本轮重新通过 SSH 核对来源；`test_mission_buttons.py` 使用已验证的 v6 语音入口与 v7 视觉握手回归版本，保留设备旧测试哈希，差异记入上级来源清单。

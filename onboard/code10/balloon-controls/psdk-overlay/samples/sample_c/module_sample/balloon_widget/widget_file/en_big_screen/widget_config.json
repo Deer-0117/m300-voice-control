@@ -25,18 +25,6 @@
         }
       },
       {
-        "widget_index": 51,
-        "widget_type": "button",
-        "widget_name": "Connect API",
-        "icon_file_set": {
-          "icon_file_name_selected": "icon_button2.png",
-          "icon_file_name_unselected": "icon_button2.png"
-        },
-        "customize_rc_buttons_config": {
-          "is_enable": false
-        }
-      },
-      {
         "widget_index": 55,
         "widget_type": "button",
         "widget_name": "Execute API voice task",
@@ -49,9 +37,9 @@
         }
       },
       {
-        "widget_index": 56,
+        "widget_index": 51,
         "widget_type": "button",
-        "widget_name": "New API voice task",
+        "widget_name": "Connect API",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -61,9 +49,88 @@
         }
       },
       {
-        "widget_index": 57,
+        "widget_index": 81,
+        "widget_type": "list",
+        "widget_name": "Task type",
+        "list_item": [
+          {
+            "item_name": "Any balloon",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          },
+          {
+            "item_name": "Pink → yellow",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 82,
+        "widget_type": "list",
+        "widget_name": "Detector",
+        "list_item": [
+          {
+            "item_name": "YOLO",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          },
+          {
+            "item_name": "Color pixel detection",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 83,
+        "widget_type": "list",
+        "widget_name": "Prediction",
+        "list_item": [
+          {
+            "item_name": "Original pixel prediction",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          },
+          {
+            "item_name": "Motion compensation",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          },
+          {
+            "item_name": "Motion compensation + delayed Kalman",
+            "icon_file_set": {
+              "icon_file_name_selected": "icon_button2.png",
+              "icon_file_name_unselected": "icon_button2.png"
+            }
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 84,
         "widget_type": "button",
-        "widget_name": "Clear voice candidate",
+        "widget_name": "Start test",
         "icon_file_set": {
           "icon_file_name_selected": "icon_button2.png",
           "icon_file_name_unselected": "icon_button2.png"
@@ -156,6 +223,81 @@
         "widget_index": 67,
         "widget_type": "button",
         "widget_name": "Clear voice candidate",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 91,
+        "widget_type": "list",
+        "widget_name": "Task type",
+        "list_item": [
+          {
+            "item_name": "Any balloon"
+          },
+          {
+            "item_name": "Pink → yellow"
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 92,
+        "widget_type": "list",
+        "widget_name": "Detector",
+        "list_item": [
+          {
+            "item_name": "YOLO"
+          },
+          {
+            "item_name": "Color pixel detection"
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 93,
+        "widget_type": "list",
+        "widget_name": "Prediction",
+        "list_item": [
+          {
+            "item_name": "Original pixel prediction"
+          },
+          {
+            "item_name": "Motion compensation"
+          },
+          {
+            "item_name": "Motion compensation + delayed Kalman"
+          }
+        ],
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 94,
+        "widget_type": "button",
+        "widget_name": "Start test",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 98,
+        "widget_type": "switch",
+        "widget_name": "Record test",
+        "customize_rc_buttons_config": {
+          "is_enable": false
+        }
+      },
+      {
+        "widget_index": 99,
+        "widget_type": "button",
+        "widget_name": "Skip to next target",
         "customize_rc_buttons_config": {
           "is_enable": false
         }

@@ -6,7 +6,7 @@
 #include <time.h>
 
 #include "dji_error.h"
-#include "dji_fc_subscription.h"
+#include "balloon_background_telemetry.h"
 #include "dji_flight_controller.h"
 #include "dji_logger.h"
 #include "dji_platform.h"
@@ -219,7 +219,7 @@ static T_DjiReturnCode ProbeSubscribeTopic(E_DjiFcSubscriptionTopic topic,
                                            E_DjiDataSubscriptionTopicFreq freq,
                                            const char *name)
 {
-    T_DjiReturnCode code = DjiFcSubscription_SubscribeTopic(topic, freq, NULL);
+    T_DjiReturnCode code = BalloonSubscription_Acquire(BALLOON_SUB_PROBE, topic, freq, NULL);
     AppendProbeEvent(name, code, "read-only FC topic subscription");
     return code;
 }
@@ -395,8 +395,8 @@ T_DjiReturnCode BalloonChaseProbe_RunNoFlightProbe(void)
                      DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
                      "RID must come from the operator/RC; startup probe does not report RID");
 
-    code = DjiFcSubscription_Init();
-    AppendProbeEvent("fc_subscription_init", code, "called DjiFcSubscription_Init only");
+    code = BalloonSubscription_Init();
+    AppendProbeEvent("fc_subscription_init", code, "initialized shared subscription module");
     subscriptionInitialized = ProbeReturnCodeOk(code);
     if (subscriptionInitialized) {
         (void) ProbeSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION,
@@ -435,13 +435,13 @@ T_DjiReturnCode BalloonChaseProbe_RunNoFlightProbe(void)
     RunPureTargetChaseMock();
 
     if (subscriptionInitialized) {
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION);
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY);
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
-        (void) DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
-        code = DjiFcSubscription_DeInit();
-        AppendProbeEvent("fc_subscription_deinit", code, "unsubscribed probe topics");
+        (void) BalloonSubscription_Release(BALLOON_SUB_PROBE, DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION);
+        (void) BalloonSubscription_Release(BALLOON_SUB_PROBE, DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY);
+        (void) BalloonSubscription_Release(BALLOON_SUB_PROBE, DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
+        (void) BalloonSubscription_Release(BALLOON_SUB_PROBE, DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
+        (void) BalloonSubscription_Release(BALLOON_SUB_PROBE, DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
+        AppendProbeEvent("fc_subscription_release", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
+                         "released probe ownership; shared subscriptions retained");
     }
 
     RunTargetChaseRunOnceSelfTest(osal);
