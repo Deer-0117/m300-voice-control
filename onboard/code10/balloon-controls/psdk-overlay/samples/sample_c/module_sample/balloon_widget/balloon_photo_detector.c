@@ -1,6 +1,6 @@
 #include "../balloon_widget/balloon_clock.h"
 #include "balloon_mission_gate.h"
-#include "balloon_visual_guard.h"
+#include "balloon_api_motion.h"
 #include "balloon_evidence.h"
 #include "balloon_widget/balloon_photo_detector.h"
 
@@ -148,8 +148,10 @@ bool BalloonPhotoDetector_GetVisualFailure(char *message, size_t size)
         snprintf(message, size, "当前画面未识别到%s气球，请对准目标后重新执行", BalloonVisual_ColorText(color));
     else if (reason == 2)
         snprintf(message, size, "未收到当前任务的有效相机图像，任务未执行；请检查图传后重试");
-    else
+    else if (reason == 3)
         snprintf(message, size, "%s气球目标丢失，任务已停止；请对准目标后重新执行", BalloonVisual_ColorText(color));
+    else
+        snprintf(message, size, "API运动指令校验、接收或执行失败，任务已停止；请查看飞控日志");
     return true;
 }
 
@@ -160,11 +162,8 @@ static bool NaturalLanguageStopRequested(void)
     }
     if (!s_nlStopObserved) {
         char reason[256] = {0};
-        FILE *marker = fopen(BALLOON_NL_STOP_FILE, "r");
-        if (marker != NULL) {
-            (void) fread(reason, 1, sizeof(reason) - 1, marker);
-            fclose(marker);
-        }
+        if (!BalloonGuard_ReadRegular(BALLOON_NL_STOP_FILE, reason, sizeof(reason)))
+            reason[0] = '\0';
         s_hitUnconfirmedStop = strstr(reason, "reason=capability_hit_unconfirmed") != NULL;
         AppendControlEvent("stop_marker_observed", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS,
             s_hitUnconfirmedStop ? "hit_unconfirmed" :
@@ -1866,6 +1865,263 @@ static T_DjiReturnCode BalloonControl_HoldForVisual(uint64_t nowMs, bool clearTa
     return DjiTargetChase_Hover(nowMs);
 }
 
+/* Strict execution stays on the preflight action. No response survives a
+ * change of plan, action, boot, target loss, or operator cancellation. */
+static bool BalloonControl_ApiAckMatches(const T_BalloonVisualContext *expected)
+{
+    cJSON *ack = BalloonVisual_ReadJson(BALLOON_VISUAL_ACK_FILE);
+    T_BalloonVisualContext current;
+    bool matches = BalloonVisual_ParseAck(ack, expected->token, expected->clockId, NowMs(), &current) &&
+        BalloonVisual_SameContext(expected, &current);
+    cJSON_Delete(ack);
+    return matches;
+}
+
+/* On the active path, observe the stop marker without reading or logging it.
+ * After releasing flight authority the caller can record the stop reason. */
+static bool BalloonControl_ApiCancelled(const char *missionToken)
+{
+    struct stat marker;
+    return s_controlStopRequested || lstat(BALLOON_NL_STOP_FILE, &marker) == 0 ||
+        errno != ENOENT ||
+        !BalloonMission_Matches(BALLOON_MISSION_COMMIT, missionToken) ||
+        !BalloonMission_Healthy(missionToken);
+}
+
+static bool BalloonControl_ReadApiVisual(const T_BalloonVisualContext *expected,
+                                          T_BalloonVisualReceipt *vision)
+{
+    if (s_stopRequested || DjiTargetChase_IsControlInhibited() ||
+        BalloonControl_ApiCancelled(expected->token) || !BalloonControl_ApiAckMatches(expected))
+        return false;
+    cJSON *record = BalloonVisual_ReadJson(BALLOON_VISUAL_STATUS_FILE);
+    bool found = BalloonVisual_ParseReceipt(record, expected, NowMs(), vision) && vision->targetFound;
+    cJSON_Delete(record);
+    return found && BalloonControl_ApiAckMatches(expected) &&
+        !BalloonControl_ApiCancelled(expected->token);
+}
+
+static uint64_t BalloonControl_EarlierDeadline(uint64_t a, uint64_t b)
+{
+    return a < b ? a : b;
+}
+
+static void BalloonControl_SleepUntil(T_DjiOsalHandler *osal, uint64_t deadline)
+{
+    uint64_t now = NowMs();
+    if (now < deadline) {
+        uint64_t delay = BalloonControl_EarlierDeadline(deadline - now, BALLOON_CONTROL_LOOP_INTERVAL_MS);
+        osal->TaskSleepMs((uint32_t)delay);
+    }
+}
+
+static bool BalloonControl_ApiStateMatches(const T_TargetChaseAircraftState *request,
+                                            const T_TargetChaseAircraftState *current)
+{
+    /* A body-frame result is unsafe after a material change in heading or
+     * altitude while the API was deciding. Reject the entire command. */
+    double yawChange = remainder((double)current->attitude_deg[2] - request->attitude_deg[2], 360);
+    return fabs(yawChange) <= 10.0 &&
+        fabs((double)current->altitude_agl_m - request->altitude_agl_m) <= 0.25;
+}
+
+static T_DjiReturnCode BalloonControl_RunApiMotion(const char *token,
+                                                   const T_TargetChaseConfig *config)
+{
+    T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
+    T_BalloonVisualWatch watch;
+    T_BalloonVisualReceipt vision;
+    T_BalloonApiMotionBridge bridge = {.fd = -1};
+    T_TargetChaseAircraftState aircraft, currentAircraft;
+    T_DjiReturnCode code = DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+    const char *failure = NULL;
+    const char *receiptEvent = NULL;
+    char receiptDetail[384];
+
+    if (!osal || !BalloonControl_WaitForVisual(token, &watch) ||
+        BalloonControl_VisualCancelled(token)) return code;
+    code = DjiTargetChase_InitApiMotion(config);
+    BalloonControl_RecordInitResult(code, s_controlStopRequested);
+    AppendControlEvent("api_motion_init", code, "");
+    if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) return code;
+
+    /* Home/altitude telemetry publishes at 1 Hz. Wait passively for advancing
+     * samples without taking flight authority or sending a command. */
+    uint64_t warmupDeadline = NowMs() + 3000;
+    for (;;) {
+        if (!BalloonControl_ReadApiVisual(&watch.context, &vision)) {
+            failure = "visual_or_task_context_lost";
+            goto finished;
+        }
+        code = DjiTargetChase_ReadApiState(&aircraft);
+        if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) break;
+        if (NowMs() >= warmupDeadline) {
+            failure = "telemetry_unavailable";
+            goto finished;
+        }
+        BalloonControl_SleepUntil(osal, warmupDeadline);
+    }
+    if (!BalloonControl_ReadApiVisual(&watch.context, &vision)) {
+        failure = "visual_or_task_context_lost";
+        goto finished;
+    }
+    if (!BalloonApiMotion_Start(&bridge)) {
+        failure = "bridge_start_failed";
+        goto finished;
+    }
+    uint32_t seq = 0;
+    uint64_t lastCapture = 0;
+    bool authorityReady = false;
+    const T_DjiFlightControllerJoystickCommand zero = {0};
+    while (BalloonControl_ReadApiVisual(&watch.context, &vision)) {
+        code = DjiTargetChase_ReadApiState(&aircraft);
+        if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+            failure = "telemetry_unavailable";
+            goto finished;
+        }
+        if (vision.captureMs <= lastCapture) {
+            if (!BalloonApiMotion_Idle(&bridge)) {
+                failure = "visual_task_or_bridge_lost";
+                goto finished;
+            }
+            osal->TaskSleepMs(BALLOON_CONTROL_LOOP_INTERVAL_MS);
+            continue;
+        }
+        if (seq == UINT32_MAX) {
+            failure = "sequence_exhausted";
+            goto finished;
+        }
+        if (!BalloonControl_ReadApiVisual(&watch.context, &vision)) break;
+        if (vision.captureMs <= lastCapture) continue;
+        lastCapture = vision.captureMs;
+        uint64_t frameDeadline = lastCapture + BALLOON_VISUAL_FRAME_MAX_AGE_MS;
+        uint64_t requestDeadline = BalloonControl_EarlierDeadline(
+            frameDeadline, NowMs() + BALLOON_API_MOTION_REQUEST_MS);
+        if (!BalloonApiMotion_Request(&bridge, ++seq, &vision, &aircraft)) {
+            failure = "bridge_request_failed";
+            goto finished;
+        }
+
+        T_BalloonApiMotionCommand decision;
+        int response = 0;
+        while (NowMs() < requestDeadline &&
+               BalloonControl_ReadApiVisual(&watch.context, &vision) && vision.captureMs >= lastCapture) {
+            code = DjiTargetChase_ReadApiState(&currentAircraft);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+                failure = "telemetry_unavailable";
+                goto finished;
+            }
+            response = BalloonApiMotion_Poll(&bridge, seq, &decision);
+            if (response != 0) break;
+            BalloonControl_SleepUntil(osal, requestDeadline);
+        }
+        uint64_t accepted = NowMs();
+        if (response != 1 || accepted >= requestDeadline) {
+            failure = response < 0 ? "invalid_bridge_reply" : "api_reply_missing_or_expired";
+            goto finished;
+        }
+        uint64_t deadline = BalloonControl_EarlierDeadline(frameDeadline, accepted + decision.durationMs);
+        T_DjiFlightControllerJoystickCommand *command = &decision.joystick;
+        bool moving = command->x != 0 || command->y != 0 || command->z != 0 || command->yaw != 0;
+        if (!BalloonControl_ReadApiVisual(&watch.context, &vision)) break;
+        if (moving && !authorityReady) {
+            /* A first grant can take longer than a motion lease. Use this
+             * response only to acquire authority, then require a new frame
+             * and a new remote response before forwarding any nonzero axis. */
+            uint64_t grantDeadline = BalloonControl_EarlierDeadline(frameDeadline, accepted + 600);
+            if (!BalloonApiMotion_Idle(&bridge) || NowMs() >= grantDeadline) {
+                failure = "api_reply_expired";
+                goto finished;
+            }
+            code = DjiTargetChase_ApiEnsureAuthority(grantDeadline);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS ||
+                !BalloonControl_ReadApiVisual(&watch.context, &vision) || vision.captureMs < lastCapture ||
+                !BalloonApiMotion_Idle(&bridge) || NowMs() >= grantDeadline) {
+                failure = "authority_unavailable_or_reply_expired";
+                goto finished;
+            }
+            code = DjiTargetChase_ApiSend(&zero, 0);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+                failure = "zero_command_failed";
+                goto finished;
+            }
+            authorityReady = true;
+            lastCapture = NowMs();
+            AppendControlEvent("api_motion_authority_ready", code, "fresh_remote_reply_required");
+            continue;
+        }
+
+        snprintf(receiptDetail, sizeof(receiptDetail),
+                 "seq=%u frame_ms=%llu provider_id=%s duration_ms=%llu x=%.6g y=%.6g z=%.6g yaw=%.6g",
+                 (unsigned)seq, (unsigned long long)lastCapture, decision.providerId,
+                 (unsigned long long)decision.durationMs, command->x, command->y, command->z,
+                 command->yaw);
+        if (moving) {
+            code = DjiTargetChase_ReadApiState(&currentAircraft);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS ||
+                !BalloonControl_ApiStateMatches(&aircraft, &currentAircraft)) {
+                failure = "telemetry_unavailable_or_changed";
+                goto finished;
+            }
+        }
+        bool sent = false;
+        while (NowMs() < deadline) {
+            if (!BalloonControl_ReadApiVisual(&watch.context, &vision) || vision.captureMs < lastCapture ||
+                !BalloonApiMotion_Idle(&bridge)) {
+                failure = "visual_task_or_bridge_lost";
+                goto finished;
+            }
+            if (NowMs() >= deadline) break;
+            code = DjiTargetChase_ApiSend(command, deadline);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+                failure = "command_rejected";
+                goto finished;
+            }
+            if (!sent)
+                receiptEvent = moving ? "api_motion_command_forwarded" : "api_motion_hold_accepted";
+            sent = true;
+            BalloonControl_SleepUntil(osal, deadline);
+        }
+        /* Expired authority for this command cannot be re-used while waiting
+         * on the provider. A literal zero has no local slew or prediction. */
+        if (moving && sent) {
+            code = DjiTargetChase_ApiSend(&zero, 0);
+            if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+                failure = "zero_command_failed";
+                goto finished;
+            }
+        }
+        if (receiptEvent) {
+            AppendControlEvent(receiptEvent, DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, receiptDetail);
+            receiptEvent = NULL;
+        }
+        if (!sent || NowMs() >= frameDeadline) {
+            failure = "api_reply_or_frame_expired";
+            goto finished;
+        }
+    }
+    failure = "visual_or_task_context_lost";
+
+finished:
+    ;
+    /* The owning control thread always aborts/releases before reaping the
+     * subprocess. DeInit sends a guarded literal zero if SDK owns control. */
+    T_DjiReturnCode stop = DjiTargetChase_DeInit();
+    if (receiptEvent)
+        AppendControlEvent(receiptEvent, DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, receiptDetail);
+    AppendControlEvent("target_chase_stop_result", stop,
+                       DjiTargetChase_IsReleasePending() ? "authority_release_pending" : "authority_not_held");
+    if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) code = stop;
+    BalloonApiMotion_Close(&bridge);
+    if (failure && !s_controlStopRequested && !s_stopRequested && !NaturalLanguageStopRequested()) {
+        if (code == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+            code = DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+        AppendControlEvent("api_motion_stopped", code, failure);
+        BalloonVisual_RecordFailure(4, NULL);
+    }
+    return code;
+}
+
 static void *BalloonControlTask(void *arg)
 {
     T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
@@ -1896,7 +2152,6 @@ static void *BalloonControlTask(void *arg)
     uint64_t lastOperatorStatusMonoMs = 0;
     uint64_t taskStartMs = NowMs();
 
-    (void) arg;
     targetTimeoutMs = ReadU64EnvBounded("BALLOON_TARGET_TIMEOUT_MS",
                                         BALLOON_DEFAULT_TARGET_TIMEOUT_MS,
                                         200ULL,
@@ -2046,6 +2301,10 @@ static void *BalloonControlTask(void *arg)
     }
     if (s_controlStopRequested) goto gate_cancelled;
     AppendControlEvent("mission_gate_open", DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS, missionToken);
+    if (arg != NULL) {
+        code = BalloonControl_RunApiMotion(missionToken, &config);
+        goto gate_cancelled;
+    }
     if (!BalloonControl_WaitForVisual(missionToken, &visualWatch)) goto gate_cancelled;
     if (BalloonControl_VisualCancelled(missionToken)) goto gate_cancelled;
     code = DjiTargetChase_Init(&config);
@@ -2471,8 +2730,9 @@ gate_cancelled:
     return NULL;
 }
 
-static T_DjiReturnCode BalloonControl_Start(void)
+static T_DjiReturnCode BalloonControl_Start(bool apiMotion)
 {
+    static char apiMotionMarker;
     T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
     T_DjiReturnCode code;
 
@@ -2491,7 +2751,8 @@ static T_DjiReturnCode BalloonControl_Start(void)
 
     s_controlStopRequested = false;
     s_controlActive = true;
-    code = osal->TaskCreate("balloon_control", BalloonControlTask, 64 * 1024, NULL, &s_controlTask);
+    code = osal->TaskCreate("balloon_control", BalloonControlTask, 64 * 1024,
+                            apiMotion ? &apiMotionMarker : NULL, &s_controlTask);
     if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         s_controlActive = false;
         s_controlTask = NULL;
@@ -2780,7 +3041,7 @@ static void *PhotoDetectorTask(void *arg)
     return NULL;
 }
 
-T_DjiReturnCode BalloonPhotoDetector_Start(void)
+static T_DjiReturnCode BalloonPhotoDetector_StartWithMode(bool apiMotion)
 {
     T_DjiReturnCode code;
     T_DjiOsalHandler *osal = DjiPlatform_GetOsalHandler();
@@ -2805,7 +3066,7 @@ T_DjiReturnCode BalloonPhotoDetector_Start(void)
     s_nlStopObserved = false;
     s_hitUnconfirmedStop = false;
     s_workerActive = true;
-    code = BalloonControl_Start();
+    code = BalloonControl_Start(apiMotion);
     if (code != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         s_workerActive = false;
         s_stopRequested = true;
@@ -2825,6 +3086,16 @@ T_DjiReturnCode BalloonPhotoDetector_Start(void)
     USER_LOG_INFO("Balloon photo detector started");
     BalloonStep_Show("photo detector started", "camera init pending");
     return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+T_DjiReturnCode BalloonPhotoDetector_Start(void)
+{
+    return BalloonPhotoDetector_StartWithMode(false);
+}
+
+T_DjiReturnCode BalloonPhotoDetector_StartApiMotion(void)
+{
+    return BalloonPhotoDetector_StartWithMode(true);
 }
 
 T_DjiReturnCode BalloonPhotoDetector_Stop(void)

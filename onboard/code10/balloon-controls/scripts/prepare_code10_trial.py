@@ -14,7 +14,7 @@ sys.path.insert(0, str(RUNTIME_SOURCE))
 from flight_panel_tools import RUNTIME, SDK, WIDGET_RELATIVE, WIDGET_SCHEMA, digest
 
 V7 = CONTROLS / 'deployment/flight_panel_manifest.json'
-RELEASE = 'flight-panel-conti-code10-20261109'
+RELEASE = 'flight-panel-code10-api-motion-20261109'
 
 
 def stage_sources(output, binary=None):
@@ -26,9 +26,11 @@ def stage_sources(output, binary=None):
     paths.remove(RUNTIME / 'detector_config.json')  # active detector is device state
     paths.update(SDK / WIDGET_RELATIVE / name for name in (
         'balloon_background_telemetry.h', 'balloon_background_telemetry_impl.h',
+        'balloon_api_motion.h', 'balloon_guard_file.h',
     ))
     paths.update(RUNTIME / name for name in (
         'widget_test_options.py', 'analyze_background_telemetry.py', 'finish_flight_download.py',
+        'api_motion_bridge.py',
     ))
     binary_sha = None
     if binary is not None:
@@ -67,6 +69,8 @@ def stage_sources(output, binary=None):
                 copy(icon, root / folder / icon.name)
         for name in ('check_background_telemetry.py', 'collect_flight_results.py'):
             copy(CONTROLS / 'scripts' / name, root / 'tools' / name)
+        motion_config = 'uav-api-motion.env.example'
+        copy(RUNTIME_SOURCE.parent / 'config' / motion_config, root / 'tools' / motion_config)
 
         manifest = {'release_id': RELEASE, 'files': rows, 'widget_schema': WIDGET_SCHEMA}
         if binary_sha is None:

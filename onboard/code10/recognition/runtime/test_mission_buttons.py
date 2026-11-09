@@ -191,7 +191,7 @@ class MissionTests(unittest.TestCase):
                 with patch('uav_voice_command.confirm', return_value=confirmation) as confirm, \
                      patch.object(mission, 'wait_ack') as wait_ack:
                     with self.assertRaisesRegex(ValueError, '未生成新的'):
-                        mission.prepare(mode, self.token, False, 'recording-session')
+                        mission.prepare(mode, self.token, False, 'recording-session', api_motion=True)
                 confirm.assert_called_once_with(session='recording-session', mission_token=self.token,
                                                 allow_deferred=mode == 'api_new')
                 wait_ack.assert_not_called()

@@ -1,8 +1,8 @@
 # M300 语音任务与大模型视觉控制
 
-通信盒源码已接入 Conti 的组合测试面板、预测状态和后台遥测。操作、导出与 Code10 试装步骤见 [组合测试与后台遥测](onboard/code10/balloon-controls/README.md#组合测试与后台遥测)。
+通信盒源码已接入 Conti 的组合测试面板、预测状态和后台遥测。语音任务的运动来源是远端 API，配置及机载验收步骤见 [语音任务的远端运动控制](onboard/code10/balloon-controls/README.md#语音任务的远端运动控制)。操作、导出与 Code10 试装步骤见 [组合测试与后台遥测](onboard/code10/balloon-controls/README.md#组合测试与后台遥测)。
 
-**code10 通信盒视觉更新（2026-11-05）：** [`onboard/code10`](onboard/code10/README.md) 的任务检测使用本地 YOLO+HSV，保留黄/浅绿纯像素检测选项；语音 API 只用于文本任务解析。详见 [检测器、颜色范围和切换说明](onboard/code10/recognition/runtime/DETECTOR_SELECTION.md)。下文根目录 `app/` 的大模型视觉属于另一套独立宿主，不能据此判断通信盒当前检测路径。
+**code10 通信盒视觉更新（2026-11-05）：** [`onboard/code10`](onboard/code10/README.md) 的任务检测使用本地 YOLO+HSV，保留黄/浅绿纯像素检测选项。该日期的已部署版本使用语音 API 解析文本任务。详见 [检测器、颜色范围和切换说明](onboard/code10/recognition/runtime/DETECTOR_SELECTION.md)。下文根目录 `app/` 的大模型视觉属于另一套独立宿主，不能据此判断通信盒当前检测路径。
 
 这是面向 M300 配套 **Jetson/Linux 机载计算机**的独立源码包。保留语音识别、在线任务规划、纯视觉短时运动决策、DJI Pilot 人工确认、持续视觉反馈和分析期间悬停，移除了仿真动力学、固定气球坐标、视频回放和模拟碰撞反馈。
 

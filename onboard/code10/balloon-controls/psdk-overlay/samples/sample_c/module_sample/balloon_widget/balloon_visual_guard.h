@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "balloon_guard_file.h"
 #include "utils/cJSON.h"
 
 #ifndef BALLOON_VISUAL_STATUS_FILE
@@ -86,13 +87,7 @@ static inline cJSON *BalloonVisual_Parse(const char *text)
 static inline cJSON *BalloonVisual_ReadJson(const char *path)
 {
     char text[4096];
-    FILE *fp = fopen(path, "r");
-    if (!fp) return NULL;
-    size_t length = fread(text, 1, sizeof(text) - 1, fp);
-    bool complete = !ferror(fp) && feof(fp);
-    fclose(fp);
-    if (!complete || !length) return NULL;
-    text[length] = 0;
+    if (!BalloonGuard_ReadRegular(path, text, sizeof(text))) return NULL;
     return BalloonVisual_Parse(text);
 }
 

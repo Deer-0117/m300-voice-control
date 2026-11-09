@@ -19,6 +19,8 @@ extern "C" {
  * service's effective environment before this function is called.
  */
 T_DjiReturnCode BalloonPhotoDetector_Start(void);
+/* Same camera lifecycle with remote-only joystick control. */
+T_DjiReturnCode BalloonPhotoDetector_StartApiMotion(void);
 
 /*
  * Start the independent native program-auto exposure watchdog when enabled by

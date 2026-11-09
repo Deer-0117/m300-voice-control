@@ -104,7 +104,8 @@ class SelectedMissionTests(unittest.TestCase):
                 candidate = voice.create_candidate('撞击粉色气球', 'voice-session')
             with patch.object(voice, 'store_plan') as store_plan:
                 with self.assertRaisesRegex(ValueError, '只支持黄'):
-                    mission.prepare('voice', 'selected-test', False, 'voice-session', detector='pixel', prediction=0)
+                    mission.prepare('voice', 'selected-test', False, 'voice-session',
+                                    detector='pixel', prediction=0, api_motion=True)
                 store_plan.assert_not_called()
             self.assertEqual(mission.read_json(voice.CANDIDATE_FILE), candidate)
             self.assertEqual(voice.READY_FILE.read_text().strip(), 'voice-session')
@@ -121,6 +122,50 @@ class SelectedMissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '没有等待'):
             mission.prepare('next', 'selected-test', False, detector='yolo', prediction=1)
         self.assertEqual(mission.read_json(mission.PLAN), plan)
+
+    def test_voice_requires_api_aware_launcher_and_cannot_become_local(self):
+        for mode, api_motion in (('voice', False), ('api_new', False), ('any', True)):
+            with self.subTest(mode=mode), patch.object(voice, 'confirm') as confirm:
+                with self.assertRaisesRegex(ValueError, '运动来源不匹配'):
+                    mission.prepare(mode, 'selected-test', False, api_motion=api_motion)
+                confirm.assert_not_called()
+        self.assertFalse(mission.REQUEST.exists())
+        self.assertFalse(mission.READY.exists())
+
+    def test_api_motion_source_must_be_echoed_and_matches_only_voice(self):
+        plan = dict(plan_id='api-plan', source='widget_voice', motion_source='api',
+                    api_decision={'proposal_id': 'proposal'}, actions=mission.strike_actions(('yellow',)))
+        mission.atomic_json(mission.PLAN, plan)
+        request = dict(mode='voice', token='selected-test', plan_id=plan['plan_id'],
+                       clock_id=mission.clock_id(), digest=mission.digest(plan),
+                       started_ts_ms=mission.now_ms(), motion_source='api', record=False)
+        mission.atomic_json(mission.REQUEST, request)
+        gate = mission.MissionGate()
+        self.assertTrue(gate.poll(self.sequence))
+        receipt = mission.read_json(mission.ACK)
+        self.assertEqual(receipt.pop('motion_source'), 'api')
+        mission.atomic_json(mission.ACK, receipt)
+        with self.assertRaisesRegex(ValueError, '未确认'):
+            mission.wait_ack(request, timeout=.01)
+        for invalid in (dict(request, mode='any'), dict(request, motion_source='local'),
+                        {k: v for k, v in request.items() if k != 'motion_source'}):
+            mission.atomic_json(mission.REQUEST, invalid)
+            self.assertFalse(gate.poll(self.sequence))
+            self.assertFalse(mission.HEALTH.exists())
+
+    def test_next_rejects_voice_and_legacy_plans_with_ambiguous_provenance(self):
+        self.prepare()
+        original = mission.read_json(mission.PLAN)
+        mission.atomic_json(mission.STATE, dict(plan_id=original['plan_id'], status='awaiting_confirmation',
+                                               current_index=0, runtime_clock_id=mission.clock_id()))
+        for source in ('widget_voice', 'widget_api_new', 'api_voice_confirmed', 'widget_next'):
+            plan = dict(original, source=source)
+            if source == 'widget_next':
+                del plan['motion_source']
+            mission.atomic_json(mission.PLAN, plan)
+            with self.assertRaisesRegex(ValueError, '只能跳过本地测试'):
+                mission.prepare('next', 'selected-test', False)
+            self.assertEqual(mission.read_json(mission.PLAN), plan)
 
     def test_invalid_selection_and_task_cannot_become_any(self):
         for detector, prediction in (('missing', 1), ('yolo', 2), ('pixel', None),

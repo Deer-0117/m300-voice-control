@@ -1225,23 +1225,31 @@ static void BalloonWidget_MissionFailure(void)
 static void *BalloonWidget_MissionTask(void *arg)
 {
     T_BalloonMissionTask *task = arg;
+    const bool apiMotion = strcmp(task->mode, "voice") == 0 || strcmp(task->mode, "api_new") == 0;
     char prediction[4];
     snprintf(prediction, sizeof(prediction), "%d", task->prediction);
     char *prepare[] = {"/usr/bin/timeout", "--kill-after=2s", "75s", BALLOON_VOICE_PYTHON,
         BALLOON_MISSION_HELPER, "--mode", (char *)task->mode, "--token", task->token,
         "--record", task->record ? "1" : "0", "--voice-session", task->voiceSession,
-        "--detector", BalloonPanel_DetectorName(task->detector), "--prediction", prediction, NULL};
+        "--detector", BalloonPanel_DetectorName(task->detector), "--prediction", prediction,
+        apiMotion ? "--api-motion" : NULL, NULL};
     char *check[] = {"/usr/bin/timeout", "--kill-after=2s", "10s", BALLOON_VOICE_PYTHON,
         PANEL_HELPER, "--check-kalman", NULL};
-    const bool kalman = task->prediction == 3;
-    int result = BalloonPanel_RunDetectorHelper("--check-detector", task->detector, task->token, task->epoch);
-    bool detectorFailed = result != 0 || !BalloonMission_Matches(BALLOON_OPTIONS_ACK, task->token);
+    char *checkMotion[] = {"/usr/bin/timeout", "--kill-after=2s", "5s", "/usr/bin/python3", "-I",
+        "/home/uav/offline_balloon_strike_test/api_motion_bridge.py", "--check-config", NULL};
+    const bool kalman = !apiMotion && task->prediction == 3;
+    const bool motionConfigFailed = apiMotion &&
+        BalloonPanel_RunChild(checkMotion, task->epoch, &s_missionPid) != 0;
+    int result = motionConfigFailed ? -1 :
+        BalloonPanel_RunDetectorHelper("--check-detector", task->detector, task->token, task->epoch);
+    const bool detectorFailed = !motionConfigFailed &&
+        (result != 0 || !BalloonMission_Matches(BALLOON_OPTIONS_ACK, task->token));
     bool calibrationFailed = false;
-    if (!detectorFailed && kalman) {
+    if (!motionConfigFailed && !detectorFailed && kalman) {
         result = BalloonPanel_RunChild(check, task->epoch, &s_missionPid);
         calibrationFailed = result != 0;
     }
-    if (!detectorFailed && !calibrationFailed)
+    if (!motionConfigFailed && !detectorFailed && !calibrationFailed)
         result = BalloonPanel_RunChild(prepare, task->epoch, &s_missionPid);
     pthread_mutex_lock(&s_actionMutex);
     if (task->epoch != s_actionEpoch) goto cancelled;
@@ -1251,7 +1259,8 @@ static void *BalloonWidget_MissionTask(void *arg)
     if (task->record && !BalloonWidget_WritePlain(BALLOON_PREDICTION_RECORD_REQUEST, task->token)) goto failed;
     if (!WriteStateFile(s_triggerFilePath, "triggered")) goto failed;
     /* The camera can start now, but the control thread waits for COMMIT. */
-    if (BalloonPhotoDetector_Start() != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) goto failed;
+    if ((apiMotion ? BalloonPhotoDetector_StartApiMotion() : BalloonPhotoDetector_Start()) !=
+        DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) goto failed;
     BalloonWidget_ShowMessage(task->record ? "计划已确认加载，正在等待录像启动；尚未放行追击" : "计划已确认加载，正在启动任务");
     pthread_mutex_unlock(&s_actionMutex);
     if (task->record) {
@@ -1268,7 +1277,8 @@ static void *BalloonWidget_MissionTask(void *arg)
     if (result != 0 || !BalloonPhotoDetector_IsRunning() || BalloonPhotoDetector_IsStopping() ||
         !BalloonMission_Healthy(task->token) ||
         !BalloonWidget_WritePlain(BALLOON_MISSION_COMMIT, task->token)) goto failed;
-    BalloonWidget_ShowMessage("计划已放行，正在启动飞控；停止请按停止测试");
+    BalloonWidget_ShowMessage(apiMotion ? "语音计划已放行，等待远端运动指令；停止请按停止测试" :
+                              "计划已放行，正在启动飞控；停止请按停止测试");
     goto done;
 failed:
     result = -1;
@@ -1277,7 +1287,9 @@ failed:
     RemoveFileIfExists(s_triggerFilePath);
     RemoveFileIfExists(s_armedFilePath);
     s_isArmed = false;
-    if (detectorFailed) {
+    if (motionConfigFailed) {
+        BalloonWidget_ShowMessage("远端运动 API 配置不可用，语音任务未启动");
+    } else if (detectorFailed) {
         BalloonPanel_ShowDetectorMessage("识别服务未确认；请开启维护并重新选择识别方案，任务未启动");
     } else if (calibrationFailed) {
         char message[512] = {0};

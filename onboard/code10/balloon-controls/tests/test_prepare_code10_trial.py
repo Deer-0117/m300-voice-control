@@ -28,6 +28,10 @@ class Code10TrialTest(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text())
             self.assertFalse((runtime / 'detector_config.json').exists())
             self.assertTrue((runtime / 'widget_test_options.py').is_file())
+            self.assertTrue((runtime / 'api_motion_bridge.py').is_file())
+            self.assertTrue((overlay / trial.WIDGET_RELATIVE / 'balloon_api_motion.h').is_file())
+            self.assertTrue((overlay / trial.WIDGET_RELATIVE / 'balloon_guard_file.h').is_file())
+            self.assertTrue((output / 'tools/uav-api-motion.env.example').is_file())
             self.assertTrue((output / 'tools/check_background_telemetry.py').is_file())
 
             for row in [*manifest['files'], manifest['binary']]:

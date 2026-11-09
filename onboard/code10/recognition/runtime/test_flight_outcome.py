@@ -86,6 +86,35 @@ class FlightOutcomeTest(unittest.TestCase):
                 self.assertEqual(len(outcomes), 2)
                 self.assertTrue(all(r['physical_outcome'] == 'unknown' for r in outcomes))
 
+    def test_api_pink_yellow_does_not_advance_or_search(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            actions = [{'capability': 'strike_balloon', 'parameters': {'color': color}}
+                       for color in ('pink', 'yellow')]
+            (root/'plan.json').write_text(json.dumps({
+                'plan_id': 'api-motion', 'motion_source': 'api', 'actions': actions,
+            }))
+            with patch.multiple(worker, TASK_PLAN_FILE=root/'plan.json',
+                                TASK_STATE_FILE=root/'state.json',
+                                STOP_REQUEST_FILE=root/'stop',
+                                CONTROL_EVENT_LOG=root/'events',
+                                SEARCH_REQUEST_FILE=root/'search'), \
+                    patch.object(worker, 'now_ms', return_value=5000), \
+                    patch.dict('os.environ', {'BALLOON_NL_ALLOW_TARGET_DEFER': '1',
+                                               'BALLOON_NL_TARGET_SEARCH_TIMEOUT_MS': '1000'}):
+                sequence = worker.CapabilityTaskSequence()
+                sequence._load_plan()
+                sequence.search_missing_since_ms = 1000
+                self.assertIsNone(sequence.select([]))
+                self.assertFalse((root/'search').exists())
+                self.assertEqual(sequence.current_index, 0)
+                sequence.hit_armed = True
+                sequence.missing_since_ms = 1000
+                self.assertIsNone(sequence.select([]))
+                self.assertEqual((sequence.status, sequence.current_index), ('awaiting_confirmation', 0))
+                self.assertEqual(sequence.completed_indices, set())
+                self.assertIn('capability_hit_unconfirmed', (root/'stop').read_text())
+
     def test_pink_yellow_edge_loss_automatically_advances(self):
         self.exercise_automatic_pink_yellow(True)
 
