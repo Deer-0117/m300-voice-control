@@ -43,7 +43,7 @@ typedef struct { T_DjiReturnCode (*TaskCreate)(const char *, void *(*)(void *),
                                            uint32_t, void *, T_DjiTaskHandle *); } T_DjiOsalHandler;
 static T_DjiOsalHandler osal = {create_task};
 static T_DjiOsalHandler *DjiPlatform_GetOsalHandler(void) { return &osal; }
-static T_DjiReturnCode BalloonControl_Start(void) { return control_start_result; }
+static T_DjiReturnCode BalloonControl_Start(bool apiMotion) { (void)apiMotion; return control_start_result; }
 static void DjiTargetChase_RequestStop(void) { stop_latch_calls++; }
 static void *PhotoDetectorTask(void *arg) { return arg; }
 static void BalloonStep_Show(const char *a, const char *b) { (void)a; (void)b; }
@@ -170,6 +170,7 @@ class ControlInitNotice(unittest.TestCase):
                      function(detector, 'BalloonControl_RecordInitResult'),
                      function(detector, 'BalloonPhotoDetector_GetControlInitResult'),
                      function(detector, 'BalloonControl_Stop'),
+                     function(detector, 'BalloonPhotoDetector_StartWithMode'),
                      function(detector, 'BalloonPhotoDetector_Start'),
                      function(widget, 'BalloonWidget_ShowStoppedNotice')]
         wrapper = ('\nstatic T_DjiReturnCode actual_init_step(void) {\n'

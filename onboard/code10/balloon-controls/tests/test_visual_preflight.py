@@ -134,6 +134,33 @@ static void test_binding(void) {
     assert(!BalloonVisual_Parse("{\"token\":\"a\"}trailing"));
     assert(!BalloonVisual_Parse("{\"token\":"));
 }
+static void test_bounded_receipt_reads(void) {
+    const char *path = "guard-regular.json";
+    FILE *fp = fopen(path, "wb");
+    assert(fp);
+    assert(fputs("{\"value\":1}\n", fp) >= 0 && !fclose(fp));
+    cJSON *root = BalloonVisual_ReadJson(path);
+    assert(root && cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(root, "value")));
+    cJSON_Delete(root);
+
+    assert(!symlink(path, "guard-symlink.json"));
+    assert(!BalloonVisual_ReadJson("guard-symlink.json"));
+    assert(!mkfifo("guard-fifo.json", 0600));
+    assert(!BalloonVisual_ReadJson("guard-fifo.json"));
+    assert(!BalloonVisual_ReadJson("."));
+
+    fp = fopen(path, "wb");
+    assert(fp && fwrite("{}\0{}\n", 1, 6, fp) == 6 && !fclose(fp));
+    assert(!BalloonVisual_ReadJson(path));
+    fp = fopen(path, "wb");
+    assert(fp && fputs("{}", fp) >= 0);
+    for (size_t i = 0; i < 4096; i++) assert(fputc(' ', fp) != EOF);
+    assert(!fclose(fp));
+    assert(!BalloonVisual_ReadJson(path));
+    unlink(path);
+    unlink("guard-symlink.json");
+    unlink("guard-fifo.json");
+}
 static void test_success(void) {
     T_BalloonVisualWatch watch;live_frame=found_target=true;write_fixture();
     assert(guarded_init(&watch));assert(init_calls==1 && !gimbal_calls && !flight_calls);
@@ -230,6 +257,7 @@ static void test_normal_stop_priority(void) {
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"binding")) test_binding();
+    else if(!strcmp(argv[1],"bounded_receipt")) test_bounded_receipt_reads();
     else if(!strcmp(argv[1],"success")) test_success();
     else if(!strcmp(argv[1],"absent")) test_no_target(true);
     else if(!strcmp(argv[1],"noimage")) test_no_target(false);
@@ -312,6 +340,7 @@ static void apply_actual_visual_transition(T_BalloonVisualWatch *watch,int resul
             subprocess.run([str(self.binary),case],cwd=work,check=True,capture_output=True,text=True,timeout=5)
 
     def test_binding_color_time_clock_and_corrupt_json(self): self.run_case('binding')
+    def test_receipts_require_bounded_regular_files(self): self.run_case('bounded_receipt')
     def test_fresh_current_target_allows_initialization(self): self.run_case('success')
     def test_absent_color_causes_error_without_sdk_calls(self): self.run_case('absent')
     def test_missing_image_has_distinct_error_without_sdk_calls(self): self.run_case('noimage')

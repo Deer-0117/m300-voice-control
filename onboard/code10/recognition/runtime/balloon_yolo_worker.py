@@ -305,6 +305,7 @@ def classify_balloon_colors(image_path: Path, detections: list[dict[str, Any]]) 
 class CapabilityTaskSequence:
     def __init__(self) -> None:
         self.plan_id = ""
+        self.api_motion = False
         self.actions: list[dict[str, Any]] = []
         self.current_index = 0
         self.completed_indices: set[int] = set()
@@ -439,6 +440,7 @@ class CapabilityTaskSequence:
     def _reset(self) -> None:
         self._stop_target_search_hook("sequence_reset")
         self.plan_id = ""
+        self.api_motion = False
         self.actions = []
         self.current_index = 0
         self.completed_indices = set()
@@ -518,6 +520,7 @@ class CapabilityTaskSequence:
                 return
             self._stop_target_search_hook("plan_replaced")
             self.plan_id = plan_id
+            self.api_motion = payload.get("motion_source") == "api"
             self.actions = actions
             self.current_index = 0
             self.completed_indices = set()
@@ -660,7 +663,7 @@ class CapabilityTaskSequence:
             {"capability": "strike_balloon", "parameters": {"color": color}}
             for color in ("pink", "yellow")
         ]
-        if self.actions != pink_yellow:
+        if self.api_motion or self.actions != pink_yellow:
             self._mark_hit_unconfirmed(reason)
             return
         append_control_event("capability_step_completed_by_disappearance", {
@@ -1461,6 +1464,10 @@ class CapabilityTaskSequence:
                     self._finish_strike_attempt("missing_after_near")
         else:
             self.near_arm_count = max(0, self.near_arm_count - 1)
+            if self.api_motion:
+                # API control only observes the current action. An empty
+                # detection never requests a local search or a new target.
+                return None
             current_ms = now_ms()
             if self.search_missing_since_ms is None:
                 self.search_missing_since_ms = current_ms

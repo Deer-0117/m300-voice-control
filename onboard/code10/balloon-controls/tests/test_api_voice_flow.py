@@ -285,13 +285,15 @@ class ApiVoiceTests(unittest.TestCase):
         self.candidate(defer=True)
         def acknowledge(request, timeout=12):
             self.assertEqual(request["mode"], "api_new")
+            self.assertEqual(request["motion_source"], "api")
             self.assertEqual(request["token"], self.token)
             plan = mission.read_json(mission.PLAN)
             self.assertEqual(plan["actions"], ACTIONS)
+            self.assertEqual(plan["motion_source"], "api")
             self.assertEqual(plan["api_decision"]["source"], "agent_interpret")
         with patch.object(voice, "post_json", return_value=self.response()) as post, \
              patch.object(mission, "wait_ack", side_effect=acknowledge):
-            mission.prepare("api_new", self.token, False, self.session)
+            mission.prepare("api_new", self.token, False, self.session, api_motion=True)
         post.assert_called_once()
         self.assertEqual(mission.READY.read_text().strip(), self.token)
         self.assertFalse(mission.COMMIT.exists())

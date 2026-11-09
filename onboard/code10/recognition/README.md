@@ -1,6 +1,6 @@
 # code10 运行、识别与规划模块
 
-组合测试由 `widget_test_options.py` 核对当前检测进程、开机时钟与配置。`balloon_mission.py` 在计划握手中携带 `detector` 和 `prediction`，执行端确认后继续使用 v7 的视觉预检。省略两个选项的旧任务调用仍使用原握手格式。导出的后台遥测可由 `analyze_background_telemetry.py` 分析。
+组合测试由 `widget_test_options.py` 核对当前检测进程、开机时钟与配置。`balloon_mission.py` 在计划握手中携带 `detector` 和 `prediction`，执行端确认后继续使用 v7 的视觉预检。语音任务的启动请求、计划和执行端回执同时标记远端运动来源。导出的后台遥测可由 `analyze_background_telemetry.py` 分析。
 
 2026-11-05 选择性整合 Conti `75469fe8` 的 [YOLO/HSV 可选检测模块](runtime/DETECTOR_SELECTION.md)：默认使用本地 YOLO+HSV；纯 HSV 像素模块仅对随包黄/浅绿场景可选。图片识别不调用 API，API 保留文本任务解析。YOLO 颜色目前仍是粉/红/橙、黄/绿、蓝/紫三组，未宣称七色独立识别。此次新增来源与适配见 [视觉来源清单](VISION_SOURCE_MANIFEST.json)。
 
@@ -10,6 +10,7 @@
 | --- | --- |
 | `uav_voice_command.py` | 普通录音经 ASR 和真实 API interpret 生成候选；确认时校验会话、开机周期、时效与任务令牌。新增任务首次仅 ASR，第二次点击才调用 API。 |
 | `balloon_mission.py`、`balloon_clock.py` | 准备、执行端计划确认、录像回执、COMMIT 和同次开机时钟握手；取消使迟到结果失效。 |
+| `api_motion_bridge.py` | 每次向配置的 HTTPS API 请求一个有界运动段。按序号回传验证后的原始数值，错误和超时会关闭通信。 |
 | `uav_natural_language.py`、`uav_capabilities.py` | 既有解析、能力校验和本地计划入口；新 API 面板链路不以本地规则冒充 API 决策。 |
 | `balloon_liveview_decoder.py`、`balloon_detector_worker.py`、`balloon_yolo_worker.py`、`balloon_tracker_worker.py` | 画面解码、统一检测入口、本地 YOLO/HSV 与 MIL 追踪输入；一个进程只加载一种检测器。 |
 | `detector_selector.py`、`pixel_callable_module/`、`switch_detector.py` | 默认 YOLO 的显式配置、黄/浅绿纯像素检测、只读状态及双 SDK 服务停止后的切换。 |

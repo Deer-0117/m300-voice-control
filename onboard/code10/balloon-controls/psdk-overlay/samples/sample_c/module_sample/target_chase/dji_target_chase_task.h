@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "dji_typedef.h"
+#include "dji_flight_controller.h"
 #include "target_chase.h"
 
 #ifdef __cplusplus
@@ -39,6 +39,19 @@ typedef enum {
  */
 T_DjiReturnCode DjiTargetChase_Init(const T_TargetChaseConfig *config);
 T_DjiReturnCode DjiTargetChase_DeInit(void);
+
+/* API-only flight controller. Call from the existing owning control thread.
+ * ReadApiState does not obtain authority or write any command. Its successful
+ * result requires advancing, fresh SDK samples in the allowed airspace.
+ * Authority acquisition has its own future BalloonClock deadline of up to
+ * 600 ms. It never authorizes a motion. Nonzero writes require a fresh motion
+ * deadline of at most 150 ms and caller validation of the mission, action and
+ * visual receipt. A literal zero sends only if still the owner. */
+T_DjiReturnCode DjiTargetChase_InitApiMotion(const T_TargetChaseConfig *config);
+T_DjiReturnCode DjiTargetChase_ReadApiState(T_TargetChaseAircraftState *state);
+T_DjiReturnCode DjiTargetChase_ApiEnsureAuthority(uint64_t grant_deadline_ms);
+T_DjiReturnCode DjiTargetChase_ApiSend(const T_DjiFlightControllerJoystickCommand *command,
+                                    uint64_t deadline_ms);
 
 /* Process-local panel mode; setting it never invokes an SDK operation or
  * starts a task. The caller must serialize with task creation and wait for

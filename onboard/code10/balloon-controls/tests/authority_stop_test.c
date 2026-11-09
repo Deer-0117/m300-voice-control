@@ -29,6 +29,10 @@ static uint32_t control_stamp = 1000;
 static bool stream_samples, grant_immediately, duplicate_samples;
 static uint8_t test_device;
 static bool test_open;
+static bool api_state, api_in_air, api_velocity_healthy, api_stamp_stalled;
+static float api_altitude;
+static uint32_t api_stamp;
+static unsigned int api_read_delay_ms;
 static void control_sample(uint8_t device, bool open, bool advance) {
     T_DjiFcSubscriptionControlDevice sample = {0};
     sample.deviceStatus = device; sample.flightStatus = open;
@@ -98,8 +102,28 @@ T_DjiReturnCode DjiFcSubscription_UnSubscribeTopic(E_DjiFcSubscriptionTopic topi
     return 0;
 }
 T_DjiReturnCode DjiFcSubscription_GetLatestValueOfTopic(E_DjiFcSubscriptionTopic topic,uint8_t *data,uint16_t size,T_DjiDataTimestamp *stamp) {
-    memset(data,0,size); if (stamp) { memset(stamp,0,sizeof(*stamp)); stamp->millisecond = 1000; }
-    if (topic == DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION) ((T_DjiFcSubscriptionQuaternion*)data)->q0 = 1;
+    memset(data, 0, size);
+    if (stamp) {
+        memset(stamp, 0, sizeof(*stamp));
+        stamp->millisecond = api_state ? api_stamp : 1000;
+    }
+    if (topic == DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION)
+        ((T_DjiFcSubscriptionQuaternion *)data)->q0 = 1;
+    if (api_state) {
+        if (topic == DJI_FC_SUBSCRIPTION_TOPIC_HOME_POINT_SET_STATUS)
+            *(T_DjiFcSubscriptionHomePointSetStatus *)data = DJI_FC_SUBSCRIPTION_HOME_POINT_SET_STATUS_SUCCESS;
+        if (topic == DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED)
+            *(T_DjiFcSubscriptionAltitudeFused *)data = api_altitude;
+        if (topic == DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY)
+            ((T_DjiFcSubscriptionVelocity *)data)->health = api_velocity_healthy
+                ? DJI_FC_SUBSCRIPTION_DATA_NOT_HEALTH : DJI_FC_SUBSCRIPTION_DATA_HEALTH;
+        if (topic == DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT) {
+            *(T_DjiFcSubscriptionFlightStatus *)data = api_in_air
+                ? DJI_FC_SUBSCRIPTION_FLIGHT_STATUS_IN_AIR : DJI_FC_SUBSCRIPTION_FLIGHT_STATUS_STOPED;
+            test_clock_ms += api_read_delay_ms;
+            if (!api_stamp_stalled) ++api_stamp;
+        }
+    }
     return 0;
 }
 T_DjiOsalHandler *DjiPlatform_GetOsalHandler(void) { return NULL; }
@@ -122,6 +146,8 @@ static void fresh(void) {
     control_samples_on_subscribe = grant_after_sleeps = wait_sleeps = stop_after_sleeps = 0;
     stream_samples = grant_immediately = duplicate_samples = false;
     test_device = 0; test_open = false; test_clock_ms += 1000;
+    api_state = api_in_air = api_velocity_healthy = api_stamp_stalled = false;
+    api_altitude = 0; api_stamp = 1000; api_read_delay_ms = 0;
     s_initialized = false; s_real_authority_obtained = false; s_control_inhibited = false;
     s_manual_takeover = false; s_ever_had_authority = false; s_intentional_release = false;
     s_gimbal_manager_initialized = false; s_gimbal_angles_subscribed = false;
@@ -491,6 +517,114 @@ static void test_prediction_status_reports_fallback_and_stop(void) {
     assert(DjiTargetChase_DeInit() == 0);
 }
 
+static void api_start(void) {
+    api_state = api_in_air = api_velocity_healthy = api_stamp_stalled = true;
+    api_altitude = 5.0f;
+    setenv("BALLOON_GIMBAL_TRACKING", "1", 1);
+    stop_on_gimbal_init = true;
+    assert(DjiTargetChase_InitApiMotion(&config) == 0);
+    assert(!s_gimbal_manager_initialized && !gimbal_modes && !rotations && !obtains);
+    assert(DjiTargetChase_Init(&config) != 0);
+    assert(DjiTargetChase_SetManualTrigger(true, test_clock_ms) != 0);
+    assert(DjiTargetChase_RunOnce(test_clock_ms) != 0);
+    assert(DjiTargetChase_EnsureSearchAuthority(test_clock_ms) != 0);
+    assert(!obtains);
+}
+
+static void test_api_motion_requires_fresh_flight_state(void) {
+    fresh();
+    assert(DjiTargetChase_DeInit() == 0);
+    api_start();
+    T_TargetChaseAircraftState state;
+    uint64_t deadline = test_clock_ms + 100;
+    assert(DjiTargetChase_ReadApiState(&state) != 0);
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    ++api_stamp;
+    assert(DjiTargetChase_ReadApiState(&state) == 0 && state.in_air && state.altitude_agl_m == 5.0f);
+    api_in_air = false;
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    api_in_air = true;
+    api_velocity_healthy = false;
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    api_velocity_healthy = true;
+    api_altitude = 10.1f;
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    api_altitude = 2.9f; /* The preset controller config is stricter than the API floor. */
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    s_chase.config.max_height_m = 6.0f;
+    api_altitude = 6.1f;
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) != 0 && !obtains);
+    api_altitude = 5.0f;
+    test_clock_ms += 201;
+    assert(DjiTargetChase_ApiEnsureAuthority(test_clock_ms + 100) != 0 && !obtains);
+    assert(DjiTargetChase_DeInit() == 0 && !commands && !releases);
+}
+
+static void test_api_motion_verbatim_and_guarded_teardown(void) {
+    fresh();
+    assert(DjiTargetChase_DeInit() == 0);
+    api_start();
+    ++api_stamp;
+    uint64_t deadline = test_clock_ms + 100;
+    T_DjiFlightControllerJoystickCommand motion = {.x = .17f, .y = -.21f, .z = .09f, .yaw = -7.5f};
+    T_DjiFlightControllerJoystickCommand invalid = motion;
+    assert(DjiTargetChase_ApiSend(&motion, deadline) != 0 && !commands && !obtains);
+    assert(DjiTargetChase_ApiEnsureAuthority(test_clock_ms + 601) != 0 && !obtains);
+    assert(DjiTargetChase_ApiEnsureAuthority(deadline) == 0 && obtains == 1 && !commands);
+    assert(DjiTargetChase_ProfileJoystick(motion) != 0 && !commands);
+    invalid.x = NAN;
+    assert(DjiTargetChase_ApiSend(&invalid, deadline) != 0);
+    invalid = motion;
+    invalid.x = .25f;
+    invalid.y = -.25f;
+    assert(DjiTargetChase_ApiSend(&invalid, deadline) != 0 && !commands);
+    assert(DjiTargetChase_ApiSend(&motion, deadline) == 0 && commands == 1);
+    assert(last_command.x == motion.x && last_command.y == motion.y &&
+           last_command.z == motion.z && last_command.yaw == motion.yaw);
+    api_altitude = 7.99f;
+    assert(DjiTargetChase_ApiSend(&motion, deadline) != 0 && commands == 1);
+    api_altitude = 5.0f;
+    api_read_delay_ms = 100;
+    assert(DjiTargetChase_ApiSend(&motion, deadline) != 0 && commands == 1);
+    DjiTargetChase_RequestStop();
+    assert(DjiTargetChase_ApiSend(&motion, test_clock_ms + 100) != 0 && commands == 1);
+    assert(DjiTargetChase_DeInit() == 0 && commands == 2 && releases == 1);
+    assert(DjiTargetChase_JoystickIsZero(&last_command));
+}
+
+static void test_api_motion_grant_deadline_expires_without_output(void) {
+    compatibility_prepare();
+    api_start();
+    ++api_stamp;
+    grant_after_sleeps = 5;
+    assert(DjiTargetChase_ApiEnsureAuthority(test_clock_ms + 40) != 0);
+    assert(wait_sleeps == 4 && !s_control_device.confirmed && obtains == 1 && !commands);
+    assert(DjiTargetChase_IsReleasePending());
+    T_DjiFlightControllerJoystickCommand zero = {0};
+    assert(DjiTargetChase_ApiSend(&zero, 0) != 0 && !commands);
+    assert(DjiTargetChase_DeInit() == 0 && !commands && releases == 1);
+}
+
+static void test_api_motion_separate_grant_and_motion_deadlines(void) {
+    compatibility_prepare();
+    api_start();
+    ++api_stamp;
+    api_stamp_stalled = false;
+    grant_after_sleeps = 25;
+    uint64_t stale_motion_deadline = test_clock_ms + 50;
+    uint64_t grant_deadline = test_clock_ms + 600;
+    assert(DjiTargetChase_ApiEnsureAuthority(grant_deadline) == 0);
+    assert(wait_sleeps == 25 && s_control_device.confirmed && obtains == 1 && !commands);
+    T_DjiFlightControllerJoystickCommand motion = {.x = .1f};
+    assert(DjiTargetChase_ApiSend(&motion, stale_motion_deadline) != 0 && !commands);
+    assert(DjiTargetChase_ApiSend(&motion, grant_deadline) != 0 && !commands);
+    assert(DjiTargetChase_ApiSend(&motion, test_clock_ms + 150) == 0 && commands == 1);
+    control_sample(0, false, true);
+    assert(DjiTargetChase_ApiEnsureAuthority(test_clock_ms + 600) != 0);
+    assert(DjiTargetChase_ApiSend(&motion, test_clock_ms + 150) != 0);
+    assert(DjiTargetChase_DeInit() == 0 && commands == 1 && !releases);
+}
+
 int main(void) {
     test_initial_callback_and_takeover();
     test_late_grant_keeps_stop_latched();
@@ -515,6 +649,10 @@ int main(void) {
     test_panel_stage_change_waits_for_new_visible_target();
     test_telemetry_first_keeps_authority_monitor_live();
     test_prediction_status_reports_fallback_and_stop();
-    puts("authority_stop: 23 groups passed (SDK stubs; no aircraft I/O)");
+    test_api_motion_requires_fresh_flight_state();
+    test_api_motion_verbatim_and_guarded_teardown();
+    test_api_motion_grant_deadline_expires_without_output();
+    test_api_motion_separate_grant_and_motion_deadlines();
+    puts("authority_stop: 27 groups passed (SDK stubs; no aircraft I/O)");
     return 0;
 }

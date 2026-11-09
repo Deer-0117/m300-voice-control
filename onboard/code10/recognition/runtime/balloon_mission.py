@@ -31,6 +31,7 @@ STATE = ROOT / 'nl_task_state.json'
 EVENTS = ROOT / 'widget_events.jsonl'
 REPLACE_RETRIES = 6 if os.name == 'nt' else 1
 MISSION_MODES = ('any', 'pink', 'voice', 'api_new', 'next')
+API_MOTION_MODES = ('voice', 'api_new')
 OPTION_KEYS = ('detector', 'prediction')
 _FILE_LOCK = threading.RLock()
 
@@ -123,6 +124,19 @@ class MissionGate:
                 raise ValueError('启动请求已取消或属于其他开机周期')
             plan = read_json(PLAN)
             actions = validate_actions(plan['actions'])
+            mode = request['mode']
+            if mode not in MISSION_MODES:
+                raise ValueError('任务类型无效，请重新选择')
+            motion_source = request.get('motion_source')
+            plan_motion_source = plan.get('motion_source')
+            if motion_source is not None and plan.get('source') != 'widget_' + mode:
+                raise ValueError('计划与任务入口不匹配')
+            if mode in API_MOTION_MODES:
+                if motion_source != 'api' or plan_motion_source != 'api' or not plan.get('api_decision'):
+                    raise ValueError('语音任务缺少远端运动来源，任务未放行')
+            elif (motion_source not in (None, 'local') or plan_motion_source != motion_source
+                  or 'api_decision' in plan):
+                raise ValueError('本地测试任务的运动来源无效')
             options = {key: request[key] for key in OPTION_KEYS if key in request}
             if options:
                 validate_test_options(actions, options.get('detector'), options.get('prediction'))
@@ -159,6 +173,8 @@ class MissionGate:
                                clock_id=clock_id(), ts_ms=current, status='loaded',
                                current_index=sequence.current_index, worker_pid=os.getpid(),
                                requested_color=color, started_ts_ms=context['started_ts_ms'], **options)
+                if motion_source is not None:
+                    receipt['motion_source'] = motion_source
                 atomic_json(ACK, receipt)
                 atomic_text(HEALTH, f'{token}\t{clock_id()}\t{current}\n')
                 colors = {'pink': '粉色', 'yellow': '黄色', 'any': '任意气球'}
@@ -214,9 +230,15 @@ def validate_test_options(actions: list[dict], detector: str | None, prediction:
 
 
 def prepare(mode: str, token: str, record: bool, voice_session: str | None = None,
-            *, detector: str | None = None, prediction: int | None = None) -> None:
+            *, detector: str | None = None, prediction: int | None = None,
+            api_motion: bool = False) -> None:
     if mode not in MISSION_MODES:
         raise ValueError('任务类型无效，请重新选择')
+    # Require the launcher's explicit opt-in. A mixed old C/new Python install
+    # must never start a voice task in the legacy local controller.
+    if api_motion != (mode in API_MOTION_MODES):
+        raise ValueError('任务运动来源不匹配，语音任务须由支持远端运动 API 的面板启动')
+    motion_source = 'api' if api_motion else 'local'
     if not token or len(token) > 95 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in token):
         raise ValueError("invalid mission token")
     if not token_matches(token):
@@ -226,7 +248,7 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
         validate_test_options([], detector, prediction)
     api_decision = None
     skipped = None
-    if mode in ('voice', 'api_new'):
+    if api_motion:
         # Confirmation can perform a remote request. The C epoch check and
         # token check below reject a result that arrives after Stop.
         from uav_voice_command import confirm
@@ -246,6 +268,13 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
         api_decision = confirmation['api_decision']
     elif mode == 'next':
         old = read_json(PLAN)
+        source = old.get('source')
+        # Older widget_next archives dropped provenance. Permit only known
+        # local origins, so voice tasks cannot continue through the local gate.
+        if ('api_decision' in old or old.get('motion_source') not in (None, 'local') or
+                not (source in ('widget_any', 'widget_pink') or
+                     (source == 'widget_next' and old.get('motion_source') == 'local'))):
+            raise ValueError('只能跳过本地测试目标；语音任务请重新录入并通过远端 API 执行')
         state = read_json(STATE)
         if (state.get('plan_id') != old.get('plan_id') or state.get('status') != 'awaiting_confirmation'
                 or state.get('runtime_clock_id') != clock_id()):
@@ -263,14 +292,16 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
     if not token_matches(token):
         raise ValueError('启动已取消，迟到结果已拒绝')
     # A new immutable plan for every start, including explicit any-balloon.
-    plan = dict(version=2, plan_id=uuid.uuid4().hex, actions=actions, source='widget_' + mode)
+    plan = dict(version=2, plan_id=uuid.uuid4().hex, actions=actions, source='widget_' + mode,
+                motion_source=motion_source)
     if api_decision is not None:
         plan['api_decision'] = api_decision
     atomic_json(PLAN, plan)
     atomic_json(STATE, dict(plan_id=plan['plan_id'], status='queued', current_index=0))
     STOP.unlink(missing_ok=True)
     request = dict(token=token, mode=mode, record=record, plan_id=plan['plan_id'],
-                   digest=digest(plan), clock_id=clock_id(), started_ts_ms=now_ms())
+                   digest=digest(plan), clock_id=clock_id(), started_ts_ms=now_ms(),
+                   motion_source=motion_source)
     if has_options:
         request.update(detector=detector, prediction=prediction)
     archive = EVENTS.parent / 'mission_records' / token
@@ -287,7 +318,8 @@ def prepare(mode: str, token: str, record: bool, voice_session: str | None = Non
 
 
 def wait_ack(request: dict, timeout: float = 12.0) -> None:
-    keys = ('token', 'plan_id', 'digest', 'clock_id') + tuple(key for key in OPTION_KEYS if key in request)
+    keys = ('token', 'plan_id', 'digest', 'clock_id') + tuple(
+        key for key in (*OPTION_KEYS, 'motion_source') if key in request)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not token_matches(request['token']):
@@ -335,6 +367,7 @@ def main() -> int:
     parser.add_argument('--detector', choices=('yolo', 'pixel'))
     parser.add_argument('--prediction', type=int, choices=(0, 1, 3))
     parser.add_argument('--wait-record', action='store_true')
+    parser.add_argument('--api-motion', action='store_true')
     args = parser.parse_args()
     try:
         if args.wait_record:
@@ -343,7 +376,7 @@ def main() -> int:
             if not args.mode:
                 raise ValueError('缺少任务类型')
             prepare(args.mode, args.token, bool(args.record), args.voice_session,
-                    detector=args.detector, prediction=args.prediction)
+                    detector=args.detector, prediction=args.prediction, api_motion=args.api_motion)
         return 0
     except Exception as exc:
         atomic_text(MESSAGE, str(exc))

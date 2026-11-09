@@ -1,6 +1,7 @@
 #ifndef BALLOON_MISSION_GATE_H
 #define BALLOON_MISSION_GATE_H
 #include "balloon_clock.h"
+#include "balloon_guard_file.h"
 
 #define BALLOON_MISSION_TOKEN "/tmp/balloon_mission.token"
 #define BALLOON_MISSION_READY "/tmp/balloon_mission.ready"
@@ -10,13 +11,17 @@
 
 static inline bool BalloonMission_ReadToken(const char *path, char token[96])
 {
-    FILE *fp = fopen(path, "r");
+    char value[98];
     token[0] = '\0';
-    if (fp == NULL) return false;
-    bool ok = fgets(token, 96, fp) != NULL;
-    fclose(fp);
-    token[strcspn(token, "\r\n")] = '\0';
-    return ok && token[0] != '\0';
+    if (!BalloonGuard_ReadRegular(path, value, sizeof(value))) return false;
+    size_t length = strlen(value);
+    if (length && value[length - 1] == '\n') value[--length] = '\0';
+    if (length && value[length - 1] == '\r') value[--length] = '\0';
+    if (!length || length > 95 ||
+        strspn(value, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != length)
+        return false;
+    memcpy(token, value, length + 1);
+    return true;
 }
 
 static inline bool BalloonMission_Matches(const char *path, const char *token)
@@ -28,15 +33,15 @@ static inline bool BalloonMission_Matches(const char *path, const char *token)
 /* A receipt from another boot, request, or a stalled worker cannot open the gate. */
 static inline bool BalloonMission_Healthy(const char *token)
 {
-    char actual[96], clockId[80];
+    char line[256], actual[96], clockId[80];
     unsigned long long stamp = 0;
-    FILE *fp = fopen(BALLOON_MISSION_HEALTH, "r");
-    if (fp == NULL) return false;
-    int fields = fscanf(fp, "%95s %79s %llu", actual, clockId, &stamp);
-    fclose(fp);
+    int consumed = 0;
+    if (!BalloonGuard_ReadRegular(BALLOON_MISSION_HEALTH, line, sizeof(line))) return false;
+    int fields = sscanf(line, "%95s %79s %llu %n", actual, clockId, &stamp, &consumed);
     uint64_t now = BalloonClock_NowMs();
-    return fields == 3 && strcmp(actual, token) == 0 && BalloonClock_Matches(clockId) &&
-           now >= stamp && now - stamp <= 2000 &&
+    return fields == 3 && consumed > 0 && line[consumed] == '\0' &&
+           strcmp(actual, token) == 0 && BalloonClock_Matches(clockId) &&
+           stamp > 0 && now >= stamp && now - stamp <= 2000 &&
            BalloonMission_Matches(BALLOON_MISSION_TOKEN, token);
 }
 #endif
